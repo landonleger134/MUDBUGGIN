@@ -76,25 +76,66 @@ create index on invoices (delivery_id);
 
 -- Simple invoice numbering: MB-000001, MB-000002, ...
 create sequence invoice_number_seq start 1;
-create or replace function next_invoice_number() returns text as $$
-  select 'MB-' || lpad(nextval('invoice_number_seq')::text, 6, '0');
-$$ language sql;
+create or replace function next_invoice_number() returns text
+  language sql
+  set search_path = public
+  as $$
+    select 'MB-' || lpad(nextval('invoice_number_seq')::text, 6, '0');
+  $$;
 
--- Lock the app down to logged-in users only (this is an internal tool, not public).
--- Create your one operator login under Authentication > Users in the Supabase dashboard.
+-- ===================================================================
+-- Client Portal support (Phase 3)
+-- ===================================================================
+
+-- Distinguishes the operator (staff) from client portal logins, since both
+-- are just "authenticated" Supabase users once the portal exists.
+create table staff_users (
+  user_id uuid primary key references auth.users(id)
+);
+alter table staff_users enable row level security;
+
+create or replace function is_staff() returns boolean
+  language sql security definer stable
+  set search_path = public
+  as $$
+    select exists(select 1 from staff_users where user_id = auth.uid());
+  $$;
+
+-- After creating your operator login in Supabase, register it as staff:
+-- insert into staff_users (user_id) values ('<your-auth-user-id>');
+
+-- Links a client record to a portal login (set when you create their portal access)
+alter table clients add column if not exists auth_user_id uuid references auth.users(id);
+
+-- Order requests placed by clients through the portal
+create table order_requests (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references clients(id),
+  requested_sacks integer not null,
+  requested_date date not null,
+  notes text,
+  status text not null default 'pending',  -- pending / acknowledged / fulfilled / declined
+  created_at timestamptz not null default now()
+);
+alter table order_requests enable row level security;
+
+create policy "staff full access" on order_requests for all using (is_staff()) with check (is_staff());
+create policy "staff full access" on staff_users for all using (is_staff()) with check (is_staff());
+
+create policy "client reads own record" on clients for select using (auth_user_id = auth.uid());
+create policy "client reads own invoices" on invoices for select using (client_id in (select id from clients where auth_user_id = auth.uid()));
+create policy "client reads own orders" on order_requests for select using (client_id in (select id from clients where auth_user_id = auth.uid()));
+create policy "client inserts own order" on order_requests for insert with check (client_id in (select id from clients where auth_user_id = auth.uid()));
+
+-- Lock the app down: staff (you) get full access, clients only see their own data via the policies above.
 alter table clients enable row level security;
 alter table pickups enable row level security;
 alter table deliveries enable row level security;
 alter table delivery_sacks enable row level security;
 alter table invoices enable row level security;
 
-create policy "authenticated full access" on clients for all
-  using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
-create policy "authenticated full access" on pickups for all
-  using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
-create policy "authenticated full access" on deliveries for all
-  using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
-create policy "authenticated full access" on delivery_sacks for all
-  using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
-create policy "authenticated full access" on invoices for all
-  using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "staff full access" on clients for all using (is_staff()) with check (is_staff());
+create policy "staff full access" on pickups for all using (is_staff()) with check (is_staff());
+create policy "staff full access" on deliveries for all using (is_staff()) with check (is_staff());
+create policy "staff full access" on delivery_sacks for all using (is_staff()) with check (is_staff());
+create policy "staff full access" on invoices for all using (is_staff()) with check (is_staff());
