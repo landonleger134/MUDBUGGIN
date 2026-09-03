@@ -91,7 +91,29 @@
     <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
     <button onclick="handleLogin()">Log In</button>
     <div id="login-error"></div>
+    <a href="#" onclick="showForgotPassword(); return false;" style="display:block;font-size:12px;color:var(--water-light);margin-top:10px;">Forgot your password?</a>
     <button id="a2hs-btn-login" type="button" onclick="showAddToHomeScreen()" style="background:transparent;color:var(--water);border:1px solid var(--rope-dark);margin-top:14px;">📱 Add This to Your Phone's Home Screen</button>
+  </div>
+</div>
+
+<div id="forgot-screen" style="display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--water);">
+  <div class="login-card">
+    <h1>Reset Password</h1>
+    <p class="sub">Enter your email and we'll send a reset link</p>
+    <input type="email" id="forgot-email" placeholder="Email" autocomplete="username">
+    <button onclick="sendPasswordReset()">Send Reset Link</button>
+    <div id="forgot-msg" style="font-size:13px;color:var(--water-light);min-height:18px;margin-top:8px;"></div>
+    <a href="#" onclick="showLoginScreen(); return false;" style="display:block;font-size:12px;color:var(--water-light);margin-top:10px;">Back to Log In</a>
+  </div>
+</div>
+
+<div id="reset-screen" style="display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--water);">
+  <div class="login-card">
+    <h1>Set New Password</h1>
+    <p class="sub">Choose a new password below</p>
+    <input type="password" id="reset-password" placeholder="New password" autocomplete="new-password">
+    <button onclick="submitNewPassword()">Save New Password</button>
+    <div id="reset-msg" style="font-size:13px;color:var(--water-light);min-height:18px;margin-top:8px;"></div>
   </div>
 </div>
 
@@ -171,6 +193,74 @@ async function handleLogin(){
   }catch(e){ errEl.textContent = 'Could not reach the server.'; }
 }
 function handleLogout(){ clearSession(); location.reload(); }
+
+function showLoginScreen(){
+  document.getElementById('forgot-screen').style.display = 'none';
+  document.getElementById('reset-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+function showForgotPassword(){
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('forgot-screen').style.display = 'flex';
+  document.getElementById('forgot-msg').textContent = '';
+}
+
+async function sendPasswordReset(){
+  const email = document.getElementById('forgot-email').value.trim();
+  const msgEl = document.getElementById('forgot-msg');
+  if(!email){ msgEl.textContent = 'Enter your email.'; return; }
+  msgEl.textContent = 'Sending…';
+  try{
+    await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+      body: JSON.stringify({ email, options: { redirect_to: window.location.origin + '/portal.html' } })
+    });
+    msgEl.textContent = 'If that email is on file, a reset link is on its way — check your inbox.';
+  }catch(e){
+    msgEl.textContent = 'Could not send right now — try again shortly.';
+  }
+}
+
+let _recoveryAccessToken = null;
+function checkForRecoveryLink(){
+  const hash = window.location.hash;
+  if(hash && hash.includes('type=recovery')){
+    const params = new URLSearchParams(hash.slice(1));
+    _recoveryAccessToken = params.get('access_token');
+    if(_recoveryAccessToken){
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('reset-screen').style.display = 'flex';
+      return true;
+    }
+  }
+  return false;
+}
+
+async function submitNewPassword(){
+  const password = document.getElementById('reset-password').value;
+  const msgEl = document.getElementById('reset-msg');
+  if(!password || password.length < 6){ msgEl.textContent = 'Password must be at least 6 characters.'; return; }
+  msgEl.textContent = 'Saving…';
+  try{
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${_recoveryAccessToken}`
+      },
+      body: JSON.stringify({ password })
+    });
+    if(!res.ok){ msgEl.textContent = 'Could not update password — the link may have expired. Request a new one.'; return; }
+    msgEl.textContent = 'Password updated! You can log in now.';
+    history.replaceState(null, '', window.location.pathname);
+    setTimeout(() => {
+      document.getElementById('reset-screen').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
+    }, 1500);
+  }catch(e){ msgEl.textContent = 'Could not reach the server.'; }
+}
 
 async function sb(path, options = {}){
   const session = getSession();
@@ -371,7 +461,7 @@ function showAddToHomeScreen(){
 }
 
 document.getElementById('login-password').addEventListener('keydown', e => { if(e.key === 'Enter') handleLogin(); });
-boot();
+if(!checkForRecoveryLink()) boot();
 </script>
 </body>
 </html>

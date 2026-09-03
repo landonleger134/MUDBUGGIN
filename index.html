@@ -470,7 +470,10 @@
         <option value="Other">Other</option>
       </select>
     </div>
-    <div class="field" id="pm-check-field" style="display:none;"><label>Check Number</label><input id="pm-check-number"></div>
+    <div class="field" id="pm-check-field" style="display:none;">
+      <label>Check Number</label><input id="pm-check-number">
+      <label style="margin-top:8px;">Photo of Check (optional)</label><input id="pm-check-photo" type="file" accept="image/*" capture="environment">
+    </div>
     <div class="field"><label>Date Paid</label><input id="pm-date" type="date"></div>
     <div style="display:flex;gap:10px;">
       <button class="btn" onclick="savePayment()">Mark Paid</button>
@@ -1092,8 +1095,7 @@ function showClientForm(id){
             <p style="font-size:13px;color:var(--water-light);">Portal login is active for ${escapeHtml(existing.email || '')}.</p>
             <button class="btn secondary" onclick="shareOrCopy('${PORTAL_URL}', 'Mud Buggin LLC Portal')">Share Portal Link</button>
           ` : `
-            <p style="font-size:13px;color:var(--water-light);margin-bottom:10px;">Give this client a login so they can view invoices and place orders. Requires an email above.</p>
-            <div class="field"><label>Set a Portal Password</label><input id="cf-portal-password" type="password" placeholder="At least 6 characters"></div>
+            <p style="font-size:13px;color:var(--water-light);margin-bottom:10px;">Give this client a login so they can view invoices and place orders — the password will be their name, no spaces, so it's easy for them to type. Requires an email above.</p>
             <button class="btn secondary" onclick="createPortalLogin('${existing.id}')">Create Portal Login</button>
           `}
         </div>
@@ -1105,9 +1107,10 @@ function showClientForm(id){
 async function createPortalLogin(clientId){
   const client = (window._clientsCache || []).find(c => c.id === clientId);
   const email = document.getElementById('cf-email').value.trim();
-  const password = document.getElementById('cf-portal-password').value;
   if(!email){ toast('Add a client email above and save first.', true); return; }
-  if(!password || password.length < 6){ toast('Enter a password of at least 6 characters.', true); return; }
+  const nameSource = document.getElementById('cf-contact').value.trim() || document.getElementById('cf-business').value.trim() || 'client';
+  let password = nameSource.replace(/[^a-zA-Z]/g, '').toLowerCase();
+  if(password.length < 6) password = password.padEnd(6, '1');
   try{
     const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
       method: 'POST',
@@ -1561,7 +1564,7 @@ function renderInvoicesTable(){
           <option value="paid" ${inv.status==='paid'?'selected':''}>Paid</option>
         </select>
       </td>
-      <td data-label="Payment">${inv.status === 'paid' ? `${escapeHtml(inv.payment_method || '—')}${inv.check_number ? ' #' + escapeHtml(inv.check_number) : ''}` : '—'}</td>
+      <td data-label="Payment">${inv.status === 'paid' ? `${escapeHtml(inv.payment_method || '—')}${inv.check_number ? ' #' + escapeHtml(inv.check_number) : ''}${inv.check_photo_url ? ` <button class="btn small secondary" onclick="viewCheckPhoto('${inv.check_photo_url}')">Photo</button>` : ''}` : '—'}</td>
       <td><button class="btn small secondary" onclick="viewInvoice('${inv.id}')">View</button></td>
     </tr>`;
   }).join('');
@@ -1574,6 +1577,7 @@ async function updateInvoiceStatus(id, status, selectEl){
     document.getElementById('pm-method').value = 'Cash';
     document.getElementById('pm-check-field').style.display = 'none';
     document.getElementById('pm-check-number').value = '';
+    document.getElementById('pm-check-photo').value = '';
     document.getElementById('pm-date').value = new Date().toISOString().slice(0,10);
     document.getElementById('payment-modal').style.display = 'flex';
     return;
@@ -1605,17 +1609,44 @@ async function savePayment(){
   const method = document.getElementById('pm-method').value;
   const checkNumber = method === 'Check' ? document.getElementById('pm-check-number').value.trim() : null;
   const paidDate = document.getElementById('pm-date').value;
+  const photoInput = document.getElementById('pm-check-photo');
+  const photoFile = method === 'Check' ? photoInput.files[0] : null;
   try{
-    await sb(`invoices?id=eq.${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: 'paid', payment_method: method, check_number: checkNumber || null, paid_date: paidDate || null })
-    });
+    const payload = { status: 'paid', payment_method: method, check_number: checkNumber || null, paid_date: paidDate || null };
+    if(photoFile){
+      const session = getSession();
+      const path = `${Date.now()}_${photoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/check-photos/${path}`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': photoFile.type || 'application/octet-stream'
+        },
+        body: photoFile
+      });
+      if(!uploadRes.ok){ throw new Error('Photo upload failed — payment not saved, try again.'); }
+      payload.check_photo_url = path;
+    }
+    await sb(`invoices?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
     const inv = (window._invoicesCache || []).find(i => i.id === id);
-    if(inv){ inv.status = 'paid'; inv.payment_method = method; inv.check_number = checkNumber; inv.paid_date = paidDate; }
+    if(inv) Object.assign(inv, payload);
     toast('Marked paid.');
     closePaymentModal();
     renderInvoicesTable();
   }catch(e){ toast('Could not save: ' + e.message, true); }
+}
+
+async function viewCheckPhoto(path){
+  try{
+    const session = getSession();
+    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/authenticated/check-photos/${path}`, {
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+    });
+    if(!res.ok) throw new Error('Photo not found.');
+    const blob = await res.blob();
+    window.open(URL.createObjectURL(blob), '_blank');
+  }catch(e){ toast('Could not open photo: ' + e.message, true); }
 }
 
 async function deleteInvoice(id){

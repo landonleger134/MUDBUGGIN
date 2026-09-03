@@ -78,6 +78,12 @@ create index on invoices (delivery_id);
 alter table invoices add column if not exists payment_method text;
 alter table invoices add column if not exists check_number text;
 alter table invoices add column if not exists paid_date date;
+alter table invoices add column if not exists check_photo_url text;
+
+-- Storage bucket for photos of received checks (staff-only)
+insert into storage.buckets (id, name, public) values ('check-photos', 'check-photos', false) on conflict (id) do nothing;
+create policy "staff read check photos" on storage.objects for select using (bucket_id = 'check-photos' and is_staff());
+create policy "staff upload check photos" on storage.objects for insert with check (bucket_id = 'check-photos' and is_staff());
 
 -- Simple invoice numbering: MB-000001, MB-000002, ...
 create sequence invoice_number_seq start 1;
