@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Mud Buggin LLC</title>
+<link rel="manifest" href="/manifest-app.json">
+<meta name="theme-color" content="#243336">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mud Buggin">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -279,11 +286,11 @@
 
   .invoice-doc table.idoc-table{width:100%;border-collapse:collapse;margin-bottom:6px;}
   .invoice-doc table.idoc-table thead th{
-    background:#f4f2ee;color:#555;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;
-    text-align:left;padding:9px 10px;border-bottom:2px solid #ddd;
+    background:#f4f2ee;color:#555;font-size:9.5px;text-transform:uppercase;letter-spacing:0.05em;
+    text-align:left;padding:5px 8px;border-bottom:2px solid #ddd;
   }
   .invoice-doc table.idoc-table thead th.num{text-align:right;}
-  .invoice-doc table.idoc-table td{padding:9px 10px;font-size:13.5px;border-bottom:1px solid #ececec;}
+  .invoice-doc table.idoc-table td{padding:3px 8px;font-size:12px;line-height:1.4;border-bottom:1px solid #f0f0f0;}
   .invoice-doc table.idoc-table td.num{text-align:right;font-variant-numeric:tabular-nums;}
 
   .invoice-doc .idoc-totals{display:flex;justify-content:flex-end;margin-top:18px;}
@@ -421,6 +428,7 @@
       <a href="#schedule" data-route="schedule">Schedule <span id="schedule-badge" style="display:none;background:var(--gold);color:var(--black);border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px;"></span></a>
       <a href="#todos" data-route="todos">To-Do</a>
     </nav>
+    <button id="a2hs-btn" onclick="showAddToHomeScreen()" style="margin:0 18px 8px;padding:9px;background:transparent;border:1px solid rgba(255,255,255,0.25);color:var(--cream);border-radius:3px;font-size:12px;">📱 Add to Home Screen</button>
     <button id="logout-btn" onclick="handleLogout()">Log Out</button>
   </div>
   <div id="main"></div>
@@ -428,6 +436,14 @@
 
 <div id="toast"></div>
 <div id="print-area"></div>
+
+<div id="a2hs-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:6px;padding:24px;max-width:360px;width:100%;">
+    <h2 style="font-size:17px;color:var(--red);margin-bottom:12px;font-family:'Oswald',sans-serif;">Add to Home Screen</h2>
+    <div id="a2hs-content" style="font-size:14px;line-height:1.7;color:var(--black);"></div>
+    <button class="btn" style="width:100%;margin-top:16px;" onclick="document.getElementById('a2hs-modal').style.display='none'">Got it</button>
+  </div>
+</div>
 
 <div id="order-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:90;align-items:center;justify-content:center;padding:20px;">
   <div style="background:#fff;border-radius:6px;padding:24px;max-width:420px;width:100%;">
@@ -447,9 +463,10 @@
 <div id="invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:90;align-items:center;justify-content:center;padding:20px;">
   <div style="background:#fff;border-radius:6px;padding:24px;max-width:600px;width:100%;max-height:85vh;overflow-y:auto;">
     <div id="invoice-modal-content"></div>
-    <div style="display:flex;gap:10px;margin-top:16px;">
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
       <button class="btn" onclick="printInvoice(window._viewingInvoiceId)">Print / Save as PDF</button>
       <button class="btn secondary" onclick="closeInvoiceModal()">Close</button>
+      <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);margin-left:auto;" onclick="deleteInvoice(window._viewingInvoiceId)">Delete Invoice</button>
     </div>
   </div>
 </div>
@@ -550,6 +567,59 @@ function toast(msg, isError){
   el.style.display = 'block';
   clearTimeout(window._toastTimer);
   window._toastTimer = setTimeout(()=>{ el.style.display = 'none'; }, 3200);
+}
+
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+});
+
+function showAddToHomeScreen(){
+  const content = document.getElementById('a2hs-content');
+  const ua = navigator.userAgent;
+  const isIOS = /iPhone|iPad|iPod/.test(ua);
+  const isAndroid = /Android/.test(ua);
+  const modal = document.getElementById('a2hs-modal');
+
+  if(deferredInstallPrompt){
+    content.innerHTML = `Tap below to install this as an app on your phone.`;
+    modal.style.display = 'flex';
+    let btn = document.getElementById('a2hs-install-btn');
+    if(!btn){
+      btn = document.createElement('button');
+      btn.id = 'a2hs-install-btn';
+      btn.className = 'btn';
+      btn.style.width = '100%';
+      btn.style.marginTop = '10px';
+      btn.textContent = 'Install App';
+      document.getElementById('a2hs-content').after(btn);
+    }
+    btn.onclick = async () => {
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      modal.style.display = 'none';
+    };
+    return;
+  }
+
+  if(isIOS){
+    content.innerHTML = `
+      1. Tap the <strong>Share</strong> icon (square with an arrow) at the bottom of Safari.<br><br>
+      2. Scroll down and tap <strong>"Add to Home Screen."</strong><br><br>
+      3. Tap <strong>Add</strong> in the top corner.<br><br>
+      It'll show up as an icon on your home screen, just like a regular app.`;
+  } else if(isAndroid){
+    content.innerHTML = `
+      1. Tap the <strong>⋮</strong> menu (top right of Chrome).<br><br>
+      2. Tap <strong>"Add to Home screen"</strong> or <strong>"Install app."</strong><br><br>
+      3. Confirm by tapping <strong>Add</strong>.<br><br>
+      It'll show up as an icon on your home screen, just like a regular app.`;
+  } else {
+    content.innerHTML = `Open this page on your phone's browser, then use the browser's menu to find "Add to Home Screen" (Safari) or "Install app" (Chrome).`;
+  }
+  modal.style.display = 'flex';
 }
 
 /* ================= ROUTER ================= */
@@ -1225,7 +1295,10 @@ async function renderDeliveries(){
       <td data-label="$/lb">$${Number(d.price_per_lb).toFixed(2)}</td>
       <td data-label="Total">$${total.toFixed(2)}</td>
       <td data-label="Status"><span class="status-pill status-${d.status}">${d.status}</span></td>
-      <td>${invoice ? `<button class="btn small secondary" onclick="viewInvoice('${invoice.id}')">View Invoice</button>` : '—'}</td>
+      <td>
+        ${invoice ? `<button class="btn small secondary" onclick="viewInvoice('${invoice.id}')">View Invoice</button>` : '—'}
+        <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);margin-left:4px;" onclick="deleteDelivery('${d.id}')">Delete</button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -1460,6 +1533,39 @@ async function updateInvoiceStatus(id, status){
     toast('Invoice updated.');
     renderInvoicesTable();
   }catch(e){ toast('Update failed: ' + e.message, true); }
+}
+
+async function deleteInvoice(id){
+  if(!confirm('Delete this invoice? Its delivery record will stay, but will show as not-yet-invoiced. This cannot be undone.')) return;
+  try{
+    const invoices = await sb(`invoices?id=eq.${id}&select=*`);
+    const inv = invoices[0];
+    await sb(`invoices?id=eq.${id}`, { method: 'DELETE' });
+    if(inv && inv.delivery_id){
+      await sb(`deliveries?id=eq.${inv.delivery_id}`, { method: 'PATCH', body: JSON.stringify({ status: 'delivered' }) });
+    }
+    toast('Invoice deleted.');
+    closeInvoiceModal();
+    if(currentRoute().split('/')[0] === 'invoices') renderInvoices();
+    if(currentRoute().split('/')[0] === 'deliveries') renderDeliveries();
+  }catch(e){ toast('Could not delete: ' + e.message, true); }
+}
+
+async function deleteDelivery(id){
+  if(!confirm("Delete this delivery? This also deletes its invoice and sack records, and reopens the order if it came from one. This cannot be undone.")) return;
+  try{
+    const deliveries = await sb(`deliveries?id=eq.${id}&select=*`);
+    const delivery = deliveries[0];
+    await sb(`delivery_sacks?delivery_id=eq.${id}`, { method: 'DELETE' });
+    await sb(`invoices?delivery_id=eq.${id}`, { method: 'DELETE' });
+    await sb(`deliveries?id=eq.${id}`, { method: 'DELETE' });
+    if(delivery && delivery.order_request_id){
+      await sb(`order_requests?id=eq.${delivery.order_request_id}`, { method: 'PATCH', body: JSON.stringify({ status: 'confirmed' }) });
+    }
+    toast('Delivery deleted.');
+    renderDeliveries();
+    refreshScheduleBadge();
+  }catch(e){ toast('Could not delete: ' + e.message, true); }
 }
 
 function buildInvoiceHtml(inv, client, sacks){
