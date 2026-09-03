@@ -308,6 +308,20 @@
 /* ================= CONFIG ================= */
 const SUPABASE_URL = "https://rufbtrooanmqknhugvxi.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ1ZmJ0cm9vYW5tcWtuaHVndnhpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzOTk1MDYsImV4cCI6MjEwMzk3NTUwNn0.Cn0OVXWcM6Bktdg_lWZKu-BIKcxe8UBo1qJ5N6pfV4Q";
+const PORTAL_URL = `${location.origin}/portal.html`;
+
+async function shareOrCopy(text, title){
+  if(navigator.share){
+    try{ await navigator.share({ title, text }); return; }
+    catch(e){ return; } // user cancelled the share sheet — not an error
+  }
+  try{
+    await navigator.clipboard.writeText(text);
+    toast('Copied — paste it into a text message.');
+  }catch(e){
+    toast("Couldn't copy automatically. " + text, true);
+  }
+}
 
 /* ================= AUTH / SB WRAPPER ================= */
 function getSession(){
@@ -512,6 +526,7 @@ function showClientForm(id){
           <h3 style="margin-bottom:8px;">Client Portal Access</h3>
           ${existing.auth_user_id ? `
             <p style="font-size:13px;color:var(--water-light);">Portal login is active for ${escapeHtml(existing.email || '')}.</p>
+            <button class="btn secondary" onclick="shareOrCopy('${PORTAL_URL}', 'Mud Buggin LLC Portal')">Share Portal Link</button>
           ` : `
             <p style="font-size:13px;color:var(--water-light);margin-bottom:10px;">Give this client a login so they can view invoices and place orders. Requires an email above.</p>
             <div class="field"><label>Set a Portal Password</label><input id="cf-portal-password" type="password" placeholder="At least 6 characters"></div>
@@ -541,8 +556,17 @@ async function createPortalLogin(clientId){
     if(!authUserId){ toast('Account created but could not be linked automatically.', true); return; }
     await sb(`clients?id=eq.${clientId}`, { method:'PATCH', body: JSON.stringify({ auth_user_id: authUserId }) });
     toast(`Portal login created for ${email}.`);
-    document.getElementById('client-form-slot').innerHTML = '';
-    renderClients();
+    const slot = document.getElementById('client-form-slot');
+    const shareText = `Mud Buggin LLC — your delivery portal\n${PORTAL_URL}\nEmail: ${email}\nPassword: ${password}`;
+    window._pendingShareText = shareText;
+    slot.innerHTML = `
+      <div class="panel">
+        <h3>Portal Login Created</h3>
+        <p style="font-size:13px;color:var(--water-light);">This is the only time the password is shown — send it now, or write it down.</p>
+        <button class="btn" onclick="shareOrCopy(window._pendingShareText, 'Mud Buggin LLC Portal')">Share Link &amp; Password</button>
+        <button class="btn secondary" onclick="document.getElementById('client-form-slot').innerHTML=''; renderClients();">Done</button>
+      </div>
+    `;
   }catch(e){ toast('Portal setup failed: ' + e.message, true); }
 }
 
@@ -982,9 +1006,21 @@ async function renderSchedule(){
           <option value="declined" ${o.status==='declined'?'selected':''}>Declined</option>
         </select>
       </td>
-      <td>${o.status === 'pending' ? `<button class="btn small" onclick="updateOrderStatus('${o.id}', 'confirmed')">Confirm</button>` : ''}</td>
+      <td>${o.status === 'pending' ? `<button class="btn small" onclick="updateOrderStatus('${o.id}', 'confirmed')">Confirm</button>` : ''}
+        <a href="${googleCalendarUrl(o, client ? client.business_name : 'Client')}" target="_blank" class="btn small secondary" style="text-decoration:none;display:inline-block;margin-left:4px;">+ Calendar</a>
+      </td>
     </tr>`;
   }).join('');
+}
+
+function googleCalendarUrl(order, clientName){
+  const start = order.requested_date.replace(/-/g, '');
+  const endDate = new Date(order.requested_date + 'T00:00:00');
+  endDate.setDate(endDate.getDate() + 1);
+  const end = endDate.toISOString().slice(0,10).replace(/-/g, '');
+  const text = encodeURIComponent(`Crawfish delivery — ${clientName}`);
+  const details = encodeURIComponent(`${order.requested_sacks} sacks for ${clientName}.${order.notes ? ' Notes: ' + order.notes : ''}`);
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${start}/${end}&details=${details}`;
 }
 
 async function saveAvgSackWeight(){
