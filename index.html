@@ -899,7 +899,7 @@ async function renderClients(){
       <td data-label="Lead Time">${c.lead_time_hours}h</td>
       <td>
         <button class="btn small secondary" onclick="showClientForm('${c.id}')">Edit</button>
-        <button class="btn small secondary" onclick="shareOrCopy(PORTAL_URL, 'Mud Buggin LLC Portal')">Share Portal</button>
+        <button class="btn small secondary" onclick="sharePortalCredentials('${c.id}')">Share Portal</button>
         <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);margin-left:6px;" onclick="deleteClient('${c.id}', '${escapeHtml(c.business_name).replace(/'/g, "\\'")}')">Delete</button>
       </td>
     </tr>
@@ -1001,7 +1001,7 @@ async function renderClientDetail(id){
         Delivery Address: ${escapeHtml(c.delivery_address || '—')}<br>
         Portal: ${c.auth_user_id ? 'Active' : 'Not set up'}
       </p>
-      <button class="btn small secondary" onclick="shareOrCopy(PORTAL_URL, 'Mud Buggin LLC Portal')">Share Portal Link</button>
+      <button class="btn small secondary" onclick="sharePortalCredentials('${c.id}')">Share Portal Link</button>
     </div>
 
     <h3 style="margin-top:26px;margin-bottom:10px;">Order Requests</h3>
@@ -1100,7 +1100,8 @@ function showClientForm(id){
           <h3 style="margin-bottom:8px;">Client Portal Access</h3>
           ${existing.auth_user_id ? `
             <p style="font-size:13px;color:var(--water-light);">Portal login is active for ${escapeHtml(existing.email || '')}.</p>
-            <button class="btn secondary" onclick="shareOrCopy('${PORTAL_URL}', 'Mud Buggin LLC Portal')">Share Portal Link</button>
+            <button class="btn secondary" onclick="sharePortalCredentials('${existing.id}')">Share Portal Link</button>
+            <p style="font-size:11px;color:var(--water-light);margin-top:6px;">This re-shows the password based on their current name. If you've renamed this client since their login was created, it may not match — have them use "Forgot your password?" on the portal instead.</p>
           ` : `
             <p style="font-size:13px;color:var(--water-light);margin-bottom:10px;">Give this client a login so they can view invoices and place orders — the password will be their name, no spaces, so it's easy for them to type. Requires an email above.</p>
             <button class="btn secondary" onclick="createPortalLogin('${existing.id}')">Create Portal Login</button>
@@ -1111,13 +1112,30 @@ function showClientForm(id){
   `;
 }
 
+function generatePortalPassword(client){
+  const nameSource = (client.contact_name || client.business_name || 'client').trim();
+  let password = nameSource.replace(/[^a-zA-Z]/g, '').toLowerCase();
+  if(password.length < 6) password = password.padEnd(6, '1');
+  return password;
+}
+
+function sharePortalCredentials(clientId){
+  const client = (window._clientsCache || []).find(c => c.id === clientId);
+  if(!client){ toast('Could not find that client.', true); return; }
+  if(!client.email){ toast('This client has no email on file — add one first.', true); return; }
+  const password = generatePortalPassword(client);
+  const shareText = `Mud Buggin LLC — your delivery portal\n${PORTAL_URL}\nEmail: ${client.email}\nPassword: ${password}`;
+  shareOrCopy(shareText, 'Mud Buggin LLC Portal');
+}
+
 async function createPortalLogin(clientId){
   const client = (window._clientsCache || []).find(c => c.id === clientId);
   const email = document.getElementById('cf-email').value.trim();
   if(!email){ toast('Add a client email above and save first.', true); return; }
-  const nameSource = document.getElementById('cf-contact').value.trim() || document.getElementById('cf-business').value.trim() || 'client';
-  let password = nameSource.replace(/[^a-zA-Z]/g, '').toLowerCase();
-  if(password.length < 6) password = password.padEnd(6, '1');
+  const password = generatePortalPassword({
+    contact_name: document.getElementById('cf-contact').value.trim(),
+    business_name: document.getElementById('cf-business').value.trim()
+  });
   try{
     const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
       method: 'POST',
