@@ -355,8 +355,9 @@ async function sb(path, options = {}){
     const text = await res.text();
     throw new Error(`Request failed (${res.status}): ${text}`);
   }
-  if(res.status === 204) return null;
-  return res.json();
+  const text = await res.text();
+  if(!text) return null;
+  try { return JSON.parse(text); } catch(e){ return null; }
 }
 
 /* ================= TOAST ================= */
