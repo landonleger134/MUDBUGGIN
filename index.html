@@ -224,7 +224,7 @@
     margin-top:10px;
   }
 
-  .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:8px;}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:8px;}
   .stat-card{background:#fff;border:1px solid var(--rope);border-radius:4px;padding:18px;}
   .stat-card .label{font-size:12px;color:var(--water-light);margin-bottom:6px;}
   .stat-card .value{font-family:'Oswald',sans-serif;font-size:26px;color:var(--red);}
@@ -294,6 +294,7 @@
       <a href="#pickups" data-route="pickups">Pickups</a>
       <a href="#deliveries" data-route="deliveries">Deliveries</a>
       <a href="#invoices" data-route="invoices">Invoices</a>
+      <a href="#schedule" data-route="schedule">Schedule <span id="schedule-badge" style="display:none;background:var(--gold);color:var(--black);border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px;"></span></a>
     </nav>
     <button id="logout-btn" onclick="handleLogout()">Log Out</button>
   </div>
@@ -371,7 +372,7 @@ function toast(msg, isError){
 }
 
 /* ================= ROUTER ================= */
-const routes = { dashboard: renderDashboard, clients: renderClients, pickups: renderPickups, deliveries: renderDeliveries, invoices: renderInvoices };
+const routes = { dashboard: renderDashboard, clients: renderClients, pickups: renderPickups, deliveries: renderDeliveries, invoices: renderInvoices, schedule: renderSchedule };
 
 function currentRoute(){
   return (location.hash || '#dashboard').slice(1);
@@ -391,10 +392,24 @@ function boot(){
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').classList.add('visible');
     navigate();
+    refreshScheduleBadge();
   } else {
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('app').classList.remove('visible');
   }
+}
+
+async function refreshScheduleBadge(){
+  try{
+    const pending = await sb('order_requests?select=id&status=eq.pending');
+    const badge = document.getElementById('schedule-badge');
+    if(pending && pending.length){
+      badge.textContent = pending.length;
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  }catch(e){ /* quiet fail — badge just won't show */ }
 }
 
 /* ================= DASHBOARD ================= */
@@ -403,16 +418,22 @@ async function renderDashboard(){
   main.innerHTML = `<div class="page-head"><h1>Dashboard</h1></div><div class="page-head-bar"></div>
     <div class="stat-grid" id="stat-grid"><div class="empty-state">Loading…</div></div>`;
   try{
-    const [deliveries, invoices, pickups] = await Promise.all([
+    const [deliveries, invoices, pickups, pendingOrders] = await Promise.all([
       sb('deliveries?select=id,delivery_date&order=delivery_date.desc'),
       sb('invoices?select=id,total_amount,status'),
-      sb('pickups?select=id,pickup_date&order=pickup_date.desc&limit=30')
+      sb('pickups?select=id,pickup_date&order=pickup_date.desc&limit=30'),
+      sb('order_requests?select=id&status=eq.pending')
     ]);
     const unpaidTotal = invoices.filter(i => i.status === 'unpaid').reduce((s,i)=>s+Number(i.total_amount),0);
     const thisMonth = new Date().toISOString().slice(0,7);
     const deliveriesThisMonth = deliveries.filter(d => d.delivery_date.startsWith(thisMonth)).length;
     const pickupsThisMonth = pickups.filter(p => p.pickup_date.startsWith(thisMonth)).length;
+    const pendingCount = pendingOrders.length;
     document.getElementById('stat-grid').innerHTML = `
+      <div class="stat-card" style="${pendingCount ? 'border-color:var(--gold);border-width:2px;cursor:pointer;' : ''}" ${pendingCount ? `onclick="location.hash='#schedule'"` : ''}>
+        <div class="label">${pendingCount ? 'New Order Requests' : 'Order Requests'}</div>
+        <div class="value" style="${pendingCount ? 'color:#8a6600;' : ''}">${pendingCount}</div>
+      </div>
       <div class="stat-card"><div class="label">Unpaid Invoices</div><div class="value">$${unpaidTotal.toFixed(2)}</div></div>
       <div class="stat-card"><div class="label">Deliveries This Month</div><div class="value">${deliveriesThisMonth}</div></div>
       <div class="stat-card"><div class="label">Pickups This Month</div><div class="value">${pickupsThisMonth}</div></div>
@@ -486,8 +507,43 @@ function showClientForm(id){
       </div>
       <button class="btn" onclick="saveClient(${existing ? `'${existing.id}'` : null})">Save Client</button>
       <button class="btn secondary" onclick="document.getElementById('client-form-slot').innerHTML=''">Cancel</button>
+      ${existing ? `
+        <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--rope);">
+          <h3 style="margin-bottom:8px;">Client Portal Access</h3>
+          ${existing.auth_user_id ? `
+            <p style="font-size:13px;color:var(--water-light);">Portal login is active for ${escapeHtml(existing.email || '')}.</p>
+          ` : `
+            <p style="font-size:13px;color:var(--water-light);margin-bottom:10px;">Give this client a login so they can view invoices and place orders. Requires an email above.</p>
+            <div class="field"><label>Set a Portal Password</label><input id="cf-portal-password" type="password" placeholder="At least 6 characters"></div>
+            <button class="btn secondary" onclick="createPortalLogin('${existing.id}')">Create Portal Login</button>
+          `}
+        </div>
+      ` : ''}
     </div>
   `;
+}
+
+async function createPortalLogin(clientId){
+  const client = (window._clientsCache || []).find(c => c.id === clientId);
+  const email = document.getElementById('cf-email').value.trim();
+  const password = document.getElementById('cf-portal-password').value;
+  if(!email){ toast('Add a client email above and save first.', true); return; }
+  if(!password || password.length < 6){ toast('Enter a password of at least 6 characters.', true); return; }
+  try{
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if(!res.ok){ toast('Could not create portal login: ' + (data.msg || data.error_description || 'unknown error'), true); return; }
+    const authUserId = data.id || (data.user && data.user.id);
+    if(!authUserId){ toast('Account created but could not be linked automatically.', true); return; }
+    await sb(`clients?id=eq.${clientId}`, { method:'PATCH', body: JSON.stringify({ auth_user_id: authUserId }) });
+    toast(`Portal login created for ${email}.`);
+    document.getElementById('client-form-slot').innerHTML = '';
+    renderClients();
+  }catch(e){ toast('Portal setup failed: ' + e.message, true); }
 }
 
 async function saveClient(id){
@@ -863,6 +919,50 @@ function printInvoice(id){
   `;
   window.print();
 }
+
+/* ================= SCHEDULE ================= */
+async function renderSchedule(){
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="page-head"><h1>Schedule</h1></div>
+    <div class="page-head-bar"></div>
+    <table><thead><tr><th>Requested For</th><th>Client</th><th>Sacks</th><th>Notes</th><th>Status</th></tr></thead>
+    <tbody id="schedule-tbody"><tr><td colspan="5">Loading…</td></tr></tbody></table>
+  `;
+  const [orders, clients] = await Promise.all([
+    sb('order_requests?select=*&order=requested_date.asc'),
+    sb('clients?select=id,business_name')
+  ]);
+  const tbody = document.getElementById('schedule-tbody');
+  if(!orders.length){ tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No order requests yet. Once clients start ordering through the portal, they'll show up here.</div></td></tr>`; return; }
+  tbody.innerHTML = orders.map(o => {
+    const client = clients.find(c => c.id === o.client_id);
+    return `<tr>
+      <td>${o.requested_date}</td>
+      <td>${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
+      <td>${o.requested_sacks}</td>
+      <td>${escapeHtml(o.notes || '—')}</td>
+      <td>
+        <select onchange="updateOrderStatus('${o.id}', this.value)">
+          <option value="pending" ${o.status==='pending'?'selected':''}>Pending</option>
+          <option value="acknowledged" ${o.status==='acknowledged'?'selected':''}>Acknowledged</option>
+          <option value="fulfilled" ${o.status==='fulfilled'?'selected':''}>Fulfilled</option>
+          <option value="declined" ${o.status==='declined'?'selected':''}>Declined</option>
+        </select>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function updateOrderStatus(id, status){
+  try{
+    await sb(`order_requests?id=eq.${id}`, { method:'PATCH', body: JSON.stringify({ status }) });
+    toast('Order updated.');
+    renderSchedule();
+    refreshScheduleBadge();
+  }catch(e){ toast('Update failed: ' + e.message, true); }
+}
+
 
 /* ================= UTIL ================= */
 function escapeHtml(str){

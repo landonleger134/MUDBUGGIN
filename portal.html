@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mud Buggin LLC — Client Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --red:#C41E2A; --red-dark:#9A171F; --black:#1A1A1A; --gold:#F2B705;
+    --cream:#FAF6EF; --water:#243336; --water-light:#33484C;
+    --rope:#D8CBB0; --rope-dark:#B7A780; --ok:#2E7D4F; --unpaid:#B7481C;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;background:var(--cream);color:var(--black);}
+  h1,h2,h3{font-family:'Oswald',sans-serif;letter-spacing:0.02em;margin:0;}
+  button{font-family:inherit;cursor:pointer;}
+
+  #login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--water);}
+  .login-card{background:var(--cream);border-radius:4px;padding:40px 36px;width:320px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.35);}
+  .login-card h1{font-size:20px;color:var(--red);}
+  .login-card p.sub{margin:4px 0 22px;color:var(--water-light);font-size:13px;}
+  .login-card input{width:100%;padding:10px 12px;margin-bottom:10px;border:1px solid var(--rope-dark);border-radius:3px;font-size:14px;}
+  .login-card button{width:100%;padding:11px;background:var(--red);color:#fff;border:none;border-radius:3px;font-family:'Oswald',sans-serif;font-size:15px;}
+  .login-card button:hover{background:var(--red-dark);}
+  #login-error{color:var(--red);font-size:13px;min-height:18px;margin-top:8px;}
+
+  #app{display:none;max-width:760px;margin:0 auto;padding:28px 20px 60px;}
+  #app.visible{display:block;}
+  header.top{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid var(--red);padding-bottom:16px;margin-bottom:24px;}
+  header.top h1{font-size:22px;color:var(--red);}
+  header.top .sub{font-size:12px;color:var(--water-light);}
+  #logout-btn{background:transparent;border:1px solid var(--rope-dark);padding:7px 12px;border-radius:3px;font-size:12px;}
+
+  .card{background:#fff;border:1px solid var(--rope);border-radius:4px;padding:20px;margin-bottom:20px;}
+  .card h2{font-size:16px;margin-bottom:14px;}
+  .rate-line{display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--rope);}
+  .rate-line:last-child{border-bottom:none;}
+  .rate-line .label{font-size:13px;color:var(--water-light);}
+  .rate-line .value{font-family:'Oswald',sans-serif;font-size:18px;color:var(--red);}
+
+  table{width:100%;border-collapse:collapse;}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--water-light);padding:8px 6px;border-bottom:2px solid var(--rope-dark);}
+  td{padding:9px 6px;border-bottom:1px solid var(--rope);font-size:13px;}
+  .status-pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;}
+  .status-unpaid{background:rgba(183,72,28,0.14);color:var(--unpaid);}
+  .status-paid{background:rgba(46,125,79,0.14);color:var(--ok);}
+  .status-pending{background:rgba(242,183,5,0.2);color:#8a6600;}
+  .status-acknowledged{background:rgba(51,72,76,0.12);color:var(--water);}
+  .status-fulfilled{background:rgba(46,125,79,0.14);color:var(--ok);}
+  .status-declined{background:rgba(183,72,28,0.14);color:var(--unpaid);}
+
+  .field{margin-bottom:12px;}
+  .field label{display:block;font-size:12px;color:var(--water-light);margin-bottom:4px;}
+  .field input,.field textarea{width:100%;padding:9px 10px;border:1px solid var(--rope-dark);border-radius:3px;font-size:14px;font-family:inherit;}
+  .btn{padding:10px 18px;background:var(--red);color:#fff;border:none;border-radius:3px;font-size:13px;font-weight:600;}
+  .btn:hover{background:var(--red-dark);}
+  .btn:disabled{background:var(--rope-dark);cursor:not-allowed;}
+  .warn-box{background:rgba(183,72,28,0.1);border:1px solid var(--unpaid);color:var(--unpaid);padding:10px 12px;border-radius:3px;font-size:13px;margin-bottom:12px;display:none;}
+  .empty-state{padding:24px;text-align:center;color:var(--water-light);}
+  #toast{position:fixed;bottom:20px;right:20px;background:var(--water);color:#fff;padding:12px 18px;border-radius:4px;font-size:13px;display:none;box-shadow:0 6px 20px rgba(0,0,0,0.3);}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="login-card">
+    <h1>MUD BUGGIN LLC</h1>
+    <p class="sub">Client Portal</p>
+    <input type="email" id="login-email" placeholder="Email" autocomplete="username">
+    <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+    <button onclick="handleLogin()">Log In</button>
+    <div id="login-error"></div>
+  </div>
+</div>
+
+<div id="app">
+  <header class="top">
+    <div><h1>MUD BUGGIN LLC</h1><div class="sub">Client Portal</div></div>
+    <button id="logout-btn" onclick="handleLogout()">Log Out</button>
+  </header>
+
+  <div class="card">
+    <h2>Current Rate</h2>
+    <div class="rate-line"><span class="label">Price per lb</span><span class="value" id="client-price">—</span></div>
+    <div class="rate-line"><span class="label">Orders must be placed at least</span><span class="value" id="client-lead">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Place an Order Request</h2>
+    <div class="warn-box" id="lead-warning"></div>
+    <div class="field"><label>Number of Sacks</label><input id="order-sacks" type="number" min="1"></div>
+    <div class="field"><label>Date You Need It</label><input id="order-date" type="date"></div>
+    <div class="field"><label>Notes (optional)</label><textarea id="order-notes" rows="2"></textarea></div>
+    <button class="btn" id="order-submit-btn" onclick="submitOrder()">Submit Request</button>
+  </div>
+
+  <div class="card">
+    <h2>Your Order Requests</h2>
+    <table><thead><tr><th>Needed</th><th>Sacks</th><th>Status</th></tr></thead>
+    <tbody id="orders-tbody"><tr><td colspan="3">Loading…</td></tr></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Your Invoices</h2>
+    <table><thead><tr><th>Invoice #</th><th>Date</th><th>Weight</th><th>Total</th><th>Status</th></tr></thead>
+    <tbody id="invoices-tbody"><tr><td colspan="5">Loading…</td></tr></tbody></table>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const SUPABASE_URL = "https://rufbtrooanmqknhugvxi.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ1ZmJ0cm9vYW5tcWtuaHVndnhpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzOTk1MDYsImV4cCI6MjEwMzk3NTUwNn0.Cn0OVXWcM6Bktdg_lWZKu-BIKcxe8UBo1qJ5N6pfV4Q";
+
+let currentClient = null;
+
+function getSession(){ const raw = localStorage.getItem('mb_client_session'); return raw ? JSON.parse(raw) : null; }
+function setSession(s){ localStorage.setItem('mb_client_session', JSON.stringify(s)); }
+function clearSession(){ localStorage.removeItem('mb_client_session'); }
+
+async function handleLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  if(!email || !password){ errEl.textContent = 'Enter email and password.'; return; }
+  try{
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey': SUPABASE_ANON_KEY },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if(!res.ok){ errEl.textContent = data.error_description || data.msg || 'Login failed.'; return; }
+    setSession({ access_token: data.access_token, refresh_token: data.refresh_token });
+    boot();
+  }catch(e){ errEl.textContent = 'Could not reach the server.'; }
+}
+function handleLogout(){ clearSession(); location.reload(); }
+
+async function sb(path, options = {}){
+  const session = getSession();
+  const headers = Object.assign({
+    'Content-Type':'application/json',
+    'apikey': SUPABASE_ANON_KEY,
+    'Authorization': `Bearer ${session ? session.access_token : SUPABASE_ANON_KEY}`
+  }, options.headers || {});
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, Object.assign({}, options, { headers }));
+  if(res.status === 401){ clearSession(); location.reload(); return null; }
+  if(!res.ok){ const text = await res.text(); throw new Error(`Request failed (${res.status}): ${text}`); }
+  const text = await res.text();
+  if(!text) return null;
+  try{ return JSON.parse(text); }catch(e){ return null; }
+}
+
+function toast(msg, isError){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.background = isError ? 'var(--unpaid)' : 'var(--water)';
+  el.style.display = 'block';
+  clearTimeout(window._t);
+  window._t = setTimeout(()=>{ el.style.display = 'none'; }, 3200);
+}
+function escapeHtml(str){ return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+async function boot(){
+  const session = getSession();
+  if(!session){
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('app').classList.remove('visible');
+    return;
+  }
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').classList.add('visible');
+  try{
+    const clients = await sb('clients?select=*');
+    if(!clients || !clients.length){ toast('No client record linked to this login.', true); return; }
+    currentClient = clients[0];
+    document.getElementById('client-price').textContent = `$${Number(currentClient.price_per_lb).toFixed(2)}/lb`;
+    document.getElementById('client-lead').textContent = `${currentClient.lead_time_hours} hours ahead`;
+    loadOrders();
+    loadInvoices();
+  }catch(e){ toast('Could not load your account: ' + e.message, true); }
+}
+
+async function loadOrders(){
+  const orders = await sb(`order_requests?client_id=eq.${currentClient.id}&select=*&order=requested_date.desc`);
+  const tbody = document.getElementById('orders-tbody');
+  if(!orders.length){ tbody.innerHTML = `<tr><td colspan="3"><div class="empty-state">No requests yet.</div></td></tr>`; return; }
+  tbody.innerHTML = orders.map(o => `
+    <tr>
+      <td>${o.requested_date}</td>
+      <td>${o.requested_sacks}</td>
+      <td><span class="status-pill status-${o.status}">${o.status}</span></td>
+    </tr>
+  `).join('');
+}
+
+async function loadInvoices(){
+  const invoices = await sb(`invoices?client_id=eq.${currentClient.id}&select=*&order=created_at.desc`);
+  const tbody = document.getElementById('invoices-tbody');
+  if(!invoices.length){ tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No invoices yet.</div></td></tr>`; return; }
+  tbody.innerHTML = invoices.map(inv => `
+    <tr>
+      <td>${inv.invoice_number}</td>
+      <td>${inv.created_at.slice(0,10)}</td>
+      <td>${Number(inv.total_weight_lbs).toLocaleString()} lb</td>
+      <td>$${Number(inv.total_amount).toFixed(2)}</td>
+      <td><span class="status-pill status-${inv.status}">${inv.status}</span></td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('order-date').addEventListener('change', checkLeadTime);
+function checkLeadTime(){
+  const warnBox = document.getElementById('lead-warning');
+  const btn = document.getElementById('order-submit-btn');
+  const dateVal = document.getElementById('order-date').value;
+  if(!dateVal || !currentClient){ warnBox.style.display = 'none'; btn.disabled = false; return; }
+  const requested = new Date(dateVal + 'T00:00:00');
+  const minAllowed = new Date(Date.now() + currentClient.lead_time_hours * 60 * 60 * 1000);
+  if(requested < minAllowed){
+    warnBox.textContent = `This date is inside your ${currentClient.lead_time_hours}-hour lead time — please call it in directly instead of submitting here.`;
+    warnBox.style.display = 'block';
+    btn.disabled = true;
+  } else {
+    warnBox.style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+async function submitOrder(){
+  const sacks = parseInt(document.getElementById('order-sacks').value || 0, 10);
+  const date = document.getElementById('order-date').value;
+  const notes = document.getElementById('order-notes').value.trim();
+  if(!sacks || sacks < 1){ toast('Enter how many sacks you need.', true); return; }
+  if(!date){ toast('Choose a date.', true); return; }
+  checkLeadTime();
+  if(document.getElementById('order-submit-btn').disabled){ return; }
+  try{
+    await sb('order_requests', {
+      method:'POST',
+      body: JSON.stringify({ client_id: currentClient.id, requested_sacks: sacks, requested_date: date, notes })
+    });
+    toast('Order request submitted.');
+    document.getElementById('order-sacks').value = '';
+    document.getElementById('order-date').value = '';
+    document.getElementById('order-notes').value = '';
+    loadOrders();
+  }catch(e){ toast('Could not submit: ' + e.message, true); }
+}
+
+document.getElementById('login-password').addEventListener('keydown', e => { if(e.key === 'Enter') handleLogin(); });
+boot();
+</script>
+</body>
+</html>
