@@ -422,7 +422,7 @@
     <nav id="nav">
       <a href="#dashboard" data-route="dashboard">Dashboard</a>
       <a href="#clients" data-route="clients">Clients</a>
-      <a href="#pickups" data-route="pickups">Pickups</a>
+      <a href="#pickups" data-route="pickups">Dock Pick Up</a>
       <a href="#deliveries" data-route="deliveries">Deliveries</a>
       <a href="#invoices" data-route="invoices">Invoices</a>
       <a href="#schedule" data-route="schedule">Schedule <span id="schedule-badge" style="display:none;background:var(--gold);color:var(--black);border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px;"></span></a>
@@ -728,7 +728,7 @@ async function renderDashboard(){
       <div class="stat-card"><div class="label">Unpaid Invoices</div><div class="value">$${unpaidTotal.toFixed(2)}</div></div>
       <div class="stat-card"><div class="label">Deliveries This Month</div><div class="value">${deliveriesThisMonth}</div></div>
       <div class="stat-card" style="${fullDaysAhead ? 'border-color:var(--unpaid);border-width:2px;cursor:pointer;' : ''}" ${fullDaysAhead ? `onclick="location.hash='#schedule'"` : ''}>
-        <div class="label">${fullDaysAhead ? 'Days Fully Booked (7d)' : 'Pickups This Month'}</div>
+        <div class="label">${fullDaysAhead ? 'Days Fully Booked (7d)' : 'Dock Pick Ups This Month'}</div>
         <div class="value" style="${fullDaysAhead ? 'color:var(--unpaid);' : ''}">${fullDaysAhead || pickupsThisMonth}</div>
       </div>
     `;
@@ -767,9 +767,13 @@ function goToScheduleDay(dateStr){
   location.hash = '#schedule';
 }
 
-function showQuickOrderForm(){
+async function showQuickOrderForm(){
   const clients = window._clientsCache || [];
   if(!clients.length){ toast('Add a client first.', true); return; }
+  if(!window._avgSackWeight){
+    const settings = await sb('app_settings?select=*');
+    window._avgSackWeight = Number((settings.find(s => s.key === 'avg_sack_weight_lbs') || {}).value || 35);
+  }
   const slot = document.getElementById('quick-order-slot');
   const today = new Date().toISOString().slice(0,10);
   slot.innerHTML = `
@@ -783,18 +787,32 @@ function showQuickOrderForm(){
             ${clients.map(c => `<option value="${c.id}" data-price="${c.price_per_lb}">${escapeHtml(c.business_name)}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><label>Sacks</label><input id="qo-sacks" type="number" min="1"></div>
+        <div class="field"><label>Date Needed</label><input id="qo-date" type="date" value="${today}"></div>
       </div>
       <div class="row2">
-        <div class="field"><label>Date Needed</label><input id="qo-date" type="date" value="${today}"></div>
-        <div class="field"><label>Price per lb ($) <span style="font-weight:400;color:var(--water-light);">— only if different from usual</span></label><input id="qo-price" type="number" step="0.01"></div>
+        <div class="field"><label>Sacks</label><input id="qo-sacks" type="number" min="1" oninput="onQuickOrderQtyChange('sacks')"></div>
+        <div class="field"><label>Pounds <span style="font-weight:400;color:var(--water-light);">— if that's what they told you</span></label><input id="qo-lbs" type="number" step="1" oninput="onQuickOrderQtyChange('lbs')"></div>
       </div>
-      <div class="field"><label>Notes (optional)</label><input id="qo-notes" placeholder="e.g. call before dropping off"></div>
+      <div class="row2">
+        <div class="field"><label>Price per lb ($) <span style="font-weight:400;color:var(--water-light);">— only if different from usual</span></label><input id="qo-price" type="number" step="0.01"></div>
+        <div class="field"><label>Notes (optional)</label><input id="qo-notes" placeholder="e.g. call before dropping off"></div>
+      </div>
       <button class="btn" onclick="saveQuickOrder()">Confirm Order</button>
       <button class="btn secondary" onclick="document.getElementById('quick-order-slot').innerHTML=''">Cancel</button>
     </div>
   `;
   document.getElementById('qo-client').focus();
+}
+
+function onQuickOrderQtyChange(source){
+  const sacksInput = document.getElementById('qo-sacks');
+  const lbsInput = document.getElementById('qo-lbs');
+  const avg = window._avgSackWeight || 35;
+  if(source === 'sacks' && sacksInput.value){
+    lbsInput.value = Math.round(parseFloat(sacksInput.value) * avg);
+  } else if(source === 'lbs' && lbsInput.value){
+    sacksInput.value = Math.max(1, Math.round(parseFloat(lbsInput.value) / avg));
+  }
 }
 
 function onQuickOrderClientChange(){
@@ -806,14 +824,16 @@ function onQuickOrderClientChange(){
 async function saveQuickOrder(){
   const clientId = document.getElementById('qo-client').value;
   const sacks = parseInt(document.getElementById('qo-sacks').value || 0, 10);
+  const lbsVal = document.getElementById('qo-lbs').value;
   const date = document.getElementById('qo-date').value;
   const notes = document.getElementById('qo-notes').value.trim();
   const priceOverride = document.getElementById('qo-price').value;
   if(!clientId){ toast('Choose a client.', true); return; }
-  if(!sacks || sacks < 1){ toast('Enter how many sacks.', true); return; }
+  if(!sacks || sacks < 1){ toast('Enter sacks or pounds.', true); return; }
   if(!date){ toast('Choose a date.', true); return; }
   try{
     const payload = { client_id: clientId, requested_sacks: sacks, requested_date: date, notes, status: 'confirmed' };
+    if(lbsVal !== '') payload.requested_lbs = parseFloat(lbsVal);
     if(priceOverride !== '') payload.agreed_price_per_lb = parseFloat(priceOverride);
     await sb('order_requests', { method: 'POST', body: JSON.stringify(payload) });
     toast('Order confirmed.');
@@ -1121,7 +1141,7 @@ async function saveClient(id){
 async function renderPickups(){
   const main = document.getElementById('main');
   main.innerHTML = `
-    <div class="page-head"><h1>Pickups</h1><button class="btn" onclick="showPickupForm()">Log Pickup</button></div>
+    <div class="page-head"><h1>Dock Pick Up</h1><button class="btn" onclick="showPickupForm()">Log Dock Pick Up</button></div>
     <div class="page-head-bar"></div>
     <div id="pickup-form-slot"></div>
     <div class="table-scroll"><table><thead><tr><th>Date</th><th>Source</th><th>Weight (lb)</th><th>Cost</th><th>Notes</th><th>Ticket</th></tr></thead>
@@ -1129,7 +1149,7 @@ async function renderPickups(){
   `;
   const pickups = await sb('pickups?select=*&order=pickup_date.desc');
   const tbody = document.getElementById('pickups-tbody');
-  if(!pickups.length){ tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No pickups logged yet.</div></td></tr>`; return; }
+  if(!pickups.length){ tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No dock pick ups logged yet.</div></td></tr>`; return; }
   tbody.innerHTML = pickups.map(p => `
     <tr>
       <td data-label="Date">${p.pickup_date}</td>
@@ -1147,7 +1167,7 @@ function showPickupForm(){
   const today = new Date().toISOString().slice(0,10);
   slot.innerHTML = `
     <div class="panel">
-      <h3>Log a Pickup</h3>
+      <h3>Log a Dock Pick Up</h3>
       <div class="row2">
         <div class="field"><label>Date</label><input id="pf-date" type="date" value="${today}"></div>
         <div class="field"><label>Source / Dock</label><input id="pf-source" placeholder="e.g. Delacroix Dock"></div>
@@ -2012,7 +2032,7 @@ function renderCalDay(){
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--rope);">
           <div>
             <div style="font-weight:600;">${client ? escapeHtml(client.business_name) : 'Unknown'}</div>
-            <div style="font-size:12px;color:var(--water-light);">${o.requested_sacks} sacks${o.agreed_price_per_lb ? ` @ $${Number(o.agreed_price_per_lb).toFixed(2)}/lb` : ''}${o.notes ? ' — ' + escapeHtml(o.notes) : ''}</div>
+            <div style="font-size:12px;color:var(--water-light);">${o.requested_sacks} sacks${o.requested_lbs ? ` (${Number(o.requested_lbs).toLocaleString()} lb)` : ''}${o.agreed_price_per_lb ? ` @ $${Number(o.agreed_price_per_lb).toFixed(2)}/lb` : ''}${o.notes ? ' — ' + escapeHtml(o.notes) : ''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
             <span class="status-pill status-${o.status}">${o.status}</span>

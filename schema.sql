@@ -130,6 +130,9 @@ create policy "client inserts own order" on order_requests for insert with check
 -- Lets a phone-in Quick Order lock in a different price than the client's usual rate
 alter table order_requests add column if not exists agreed_price_per_lb numeric(10,2);
 
+-- Lets Quick Order accept pounds instead of sacks when that's what the client said
+alter table order_requests add column if not exists requested_lbs numeric(10,2);
+
 -- Links a delivery back to the order request it fulfilled, so the "Deliver" pipeline can mark it complete
 alter table deliveries add column if not exists order_request_id uuid references order_requests(id);
 
