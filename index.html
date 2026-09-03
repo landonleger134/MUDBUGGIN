@@ -295,6 +295,7 @@
       <a href="#deliveries" data-route="deliveries">Deliveries</a>
       <a href="#invoices" data-route="invoices">Invoices</a>
       <a href="#schedule" data-route="schedule">Schedule <span id="schedule-badge" style="display:none;background:var(--gold);color:var(--black);border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px;"></span></a>
+      <a href="#todos" data-route="todos">To-Do</a>
     </nav>
     <button id="logout-btn" onclick="handleLogout()">Log Out</button>
   </div>
@@ -386,15 +387,20 @@ function toast(msg, isError){
 }
 
 /* ================= ROUTER ================= */
-const routes = { dashboard: renderDashboard, clients: renderClients, pickups: renderPickups, deliveries: renderDeliveries, invoices: renderInvoices, schedule: renderSchedule };
+const routes = { dashboard: renderDashboard, clients: renderClients, pickups: renderPickups, deliveries: renderDeliveries, invoices: renderInvoices, schedule: renderSchedule, todos: renderTodos };
 
 function currentRoute(){
   return (location.hash || '#dashboard').slice(1);
 }
 function navigate(){
   const route = currentRoute();
-  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.route === route));
-  const fn = routes[route] || renderDashboard;
+  const topLevel = route.split('/')[0];
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.route === topLevel));
+  if(topLevel === 'clients' && route.includes('/')){
+    renderClientDetail(route.split('/')[1]);
+    return;
+  }
+  const fn = routes[topLevel] || renderDashboard;
   fn();
 }
 window.addEventListener('hashchange', navigate);
@@ -472,7 +478,7 @@ async function renderClients(){
   if(!clients.length){ tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No clients yet. Add your first one above.</div></td></tr>`; return; }
   tbody.innerHTML = clients.map(c => `
     <tr>
-      <td><strong>${escapeHtml(c.business_name)}</strong></td>
+      <td><a href="#clients/${c.id}" style="color:var(--red);font-weight:600;text-decoration:none;">${escapeHtml(c.business_name)}</a></td>
       <td>${escapeHtml(c.contact_name || '—')}</td>
       <td>${escapeHtml(c.phone || '—')}</td>
       <td>$${Number(c.price_per_lb).toFixed(2)}</td>
@@ -484,6 +490,10 @@ async function renderClients(){
     </tr>
   `).join('');
   window._clientsCache = clients;
+  if(window._openEditAfterNav){
+    showClientForm(window._openEditAfterNav);
+    window._openEditAfterNav = null;
+  }
 }
 
 async function deleteClient(id, name){
@@ -499,6 +509,115 @@ async function deleteClient(id, name){
     renderClients();
   }catch(e){ toast('Delete failed: ' + e.message, true); }
 }
+
+async function renderClientDetail(id){
+  const main = document.getElementById('main');
+  main.innerHTML = `<div class="page-head"><h1>Client</h1></div><div class="page-head-bar"></div><div class="empty-state">Loading…</div>`;
+  const [clients, orders, invoices, deliveries] = await Promise.all([
+    sb(`clients?id=eq.${id}&select=*`),
+    sb(`order_requests?client_id=eq.${id}&select=*&order=requested_date.desc`),
+    sb(`invoices?client_id=eq.${id}&select=*&order=created_at.desc`),
+    sb(`deliveries?client_id=eq.${id}&select=*&order=delivery_date.desc`)
+  ]);
+  const c = clients[0];
+  if(!c){ main.innerHTML = `<div class="empty-state">Client not found. <a href="#clients">Back to Clients</a></div>`; return; }
+  window._invoicesCache = invoices;
+  window._clientsCache = clients;
+
+  const unpaidTotal = invoices.filter(i => i.status === 'unpaid').reduce((s,i)=>s+Number(i.total_amount),0);
+  const lifetimeTotal = invoices.reduce((s,i)=>s+Number(i.total_amount),0);
+
+  main.innerHTML = `
+    <div class="page-head">
+      <h1>${escapeHtml(c.business_name)}</h1>
+      <div><a href="#clients" class="btn secondary" style="text-decoration:none;display:inline-block;">Back to Clients</a> <button class="btn" onclick="window._openEditAfterNav='${c.id}'; location.hash='#clients';">Edit</button></div>
+    </div>
+    <div class="page-head-bar"></div>
+
+    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="stat-card"><div class="label">Price / lb</div><div class="value">$${Number(c.price_per_lb).toFixed(2)}</div></div>
+      <div class="stat-card"><div class="label">Lead Time</div><div class="value">${c.lead_time_hours}h</div></div>
+      <div class="stat-card"><div class="label">Unpaid Balance</div><div class="value">$${unpaidTotal.toFixed(2)}</div></div>
+      <div class="stat-card"><div class="label">Lifetime Billed</div><div class="value">$${lifetimeTotal.toFixed(2)}</div></div>
+    </div>
+
+    <div class="panel" style="max-width:none;margin-top:24px;">
+      <h3>Contact Info</h3>
+      <p style="font-size:14px;line-height:1.8;">
+        Contact: ${escapeHtml(c.contact_name || '—')}<br>
+        Phone: ${escapeHtml(c.phone || '—')}<br>
+        Email: ${escapeHtml(c.email || '—')}<br>
+        Address: ${escapeHtml(c.address || '—')}<br>
+        Portal: ${c.auth_user_id ? 'Active' : 'Not set up'}
+      </p>
+    </div>
+
+    <h3 style="margin-top:26px;margin-bottom:10px;">Order Requests</h3>
+    <table><thead><tr><th>Needed</th><th>Sacks</th><th>Status</th><th>Notes</th></tr></thead>
+    <tbody>${orders.length ? orders.map(o => `
+      <tr><td>${o.requested_date}</td><td>${o.requested_sacks}</td><td><span class="status-pill status-${o.status}">${o.status}</span></td><td>${escapeHtml(o.notes || '—')}</td></tr>
+    `).join('') : `<tr><td colspan="4"><div class="empty-state">No order requests from this client yet.</div></td></tr>`}</tbody></table>
+
+    <h3 style="margin-top:26px;margin-bottom:10px;">Deliveries</h3>
+    <table><thead><tr><th>Date</th><th>$/lb</th><th>Status</th></tr></thead>
+    <tbody>${deliveries.length ? deliveries.map(d => `
+      <tr><td>${d.delivery_date}</td><td>$${Number(d.price_per_lb).toFixed(2)}</td><td><span class="status-pill status-${d.status}">${d.status}</span></td></tr>
+    `).join('') : `<tr><td colspan="3"><div class="empty-state">No deliveries logged for this client yet.</div></td></tr>`}</tbody></table>
+
+    <h3 style="margin-top:26px;margin-bottom:10px;">Invoices</h3>
+    <table><thead><tr><th>Invoice #</th><th>Date</th><th>Weight</th><th>Total</th><th>Status</th><th></th></tr></thead>
+    <tbody>${invoices.length ? invoices.map(inv => `
+      <tr>
+        <td>${inv.invoice_number}</td><td>${inv.created_at.slice(0,10)}</td>
+        <td>${Number(inv.total_weight_lbs).toLocaleString()} lb</td><td>$${Number(inv.total_amount).toFixed(2)}</td>
+        <td><span class="status-pill status-${inv.status}">${inv.status}</span></td>
+        <td><button class="btn small secondary" onclick="printInvoice('${inv.id}')">Print</button></td>
+      </tr>
+    `).join('') : `<tr><td colspan="6"><div class="empty-state">No invoices for this client yet.</div></td></tr>`}</tbody></table>
+  `;
+}
+
+/* ================= TODOS ================= */
+async function renderTodos(){
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="page-head"><h1>To-Do</h1></div>
+    <div class="page-head-bar"></div>
+    <div class="panel" style="max-width:640px;">
+      <div class="field"><input id="todo-input" placeholder="Add something to remember later…" onkeydown="if(event.key==='Enter') addTodo();"></div>
+      <button class="btn" onclick="addTodo()">Add</button>
+    </div>
+    <div id="todos-list" style="max-width:640px;margin-top:18px;"><div class="empty-state">Loading…</div></div>
+  `;
+  const todos = await sb('todos?select=*&order=created_at.asc');
+  const list = document.getElementById('todos-list');
+  if(!todos.length){ list.innerHTML = `<div class="empty-state">Nothing on the list right now.</div>`; return; }
+  list.innerHTML = todos.map(t => `
+    <div style="display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid var(--rope);border-radius:4px;padding:12px 16px;margin-bottom:8px;">
+      <span style="font-size:14px;">${escapeHtml(t.text)}</span>
+      <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);" onclick="deleteTodo('${t.id}')">Delete</button>
+    </div>
+  `).join('');
+}
+
+async function addTodo(){
+  const input = document.getElementById('todo-input');
+  const text = input.value.trim();
+  if(!text) return;
+  try{
+    await sb('todos', { method:'POST', body: JSON.stringify({ text }) });
+    input.value = '';
+    renderTodos();
+  }catch(e){ toast('Could not add: ' + e.message, true); }
+}
+
+async function deleteTodo(id){
+  try{
+    await sb(`todos?id=eq.${id}`, { method:'DELETE' });
+    renderTodos();
+  }catch(e){ toast('Could not delete: ' + e.message, true); }
+}
+
 
 function showClientForm(id){
   const existing = id ? (window._clientsCache || []).find(c => c.id === id) : null;
