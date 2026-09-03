@@ -520,12 +520,12 @@ async function renderPickups(){
     <div class="page-head"><h1>Pickups</h1><button class="btn" onclick="showPickupForm()">Log Pickup</button></div>
     <div class="page-head-bar"></div>
     <div id="pickup-form-slot"></div>
-    <table><thead><tr><th>Date</th><th>Source</th><th>Weight (lb)</th><th>Cost</th><th>Notes</th></tr></thead>
-    <tbody id="pickups-tbody"><tr><td colspan="5">Loading…</td></tr></tbody></table>
+    <table><thead><tr><th>Date</th><th>Source</th><th>Weight (lb)</th><th>Cost</th><th>Notes</th><th>Ticket</th></tr></thead>
+    <tbody id="pickups-tbody"><tr><td colspan="6">Loading…</td></tr></tbody></table>
   `;
   const pickups = await sb('pickups?select=*&order=pickup_date.desc');
   const tbody = document.getElementById('pickups-tbody');
-  if(!pickups.length){ tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No pickups logged yet.</div></td></tr>`; return; }
+  if(!pickups.length){ tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No pickups logged yet.</div></td></tr>`; return; }
   tbody.innerHTML = pickups.map(p => `
     <tr>
       <td>${p.pickup_date}</td>
@@ -533,6 +533,7 @@ async function renderPickups(){
       <td>${Number(p.total_weight_lbs).toLocaleString()}</td>
       <td>$${Number(p.cost_total).toFixed(2)}</td>
       <td>${escapeHtml(p.notes || '—')}</td>
+      <td>${p.photo_url ? `<button class="btn small secondary" onclick="viewPickupPhoto('${p.photo_url}')">View</button>` : '—'}</td>
     </tr>
   `).join('');
 }
@@ -552,10 +553,71 @@ function showPickupForm(){
         <div class="field"><label>Total Cost ($)</label><input id="pf-cost" type="number" step="0.01"></div>
       </div>
       <div class="field"><label>Notes</label><input id="pf-notes"></div>
+      <div class="field">
+        <label>Photo of Ticket (optional)</label>
+        <input id="pf-photo" type="file" accept="image/*" capture="environment" onchange="scanTicket()">
+        <div id="pf-scan-status" style="font-size:12px;color:var(--water-light);margin-top:6px;"></div>
+      </div>
       <button class="btn" onclick="savePickup()">Save Pickup</button>
       <button class="btn secondary" onclick="document.getElementById('pickup-form-slot').innerHTML=''">Cancel</button>
     </div>
   `;
+}
+
+function fileToBase64(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function scanTicket(){
+  const fileInput = document.getElementById('pf-photo');
+  const statusEl = document.getElementById('pf-scan-status');
+  const file = fileInput.files[0];
+  if(!file){ return; }
+  statusEl.textContent = 'Reading ticket…';
+  try{
+    const base64 = await fileToBase64(file);
+    const mediaType = file.type || 'image/jpeg';
+    const session = getSession();
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/parse-pickup-ticket`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      body: JSON.stringify({ image_base64: base64, media_type: mediaType })
+    });
+    const data = await res.json();
+    if(!res.ok || !data.parsed){
+      statusEl.textContent = "Couldn't read the ticket automatically — enter the fields manually. The photo will still be attached.";
+      return;
+    }
+    const p = data.parsed;
+    if(p.pickup_date) document.getElementById('pf-date').value = p.pickup_date;
+    if(p.source) document.getElementById('pf-source').value = p.source;
+    if(p.total_weight_lbs !== null && p.total_weight_lbs !== undefined) document.getElementById('pf-weight').value = p.total_weight_lbs;
+    if(p.cost_total !== null && p.cost_total !== undefined) document.getElementById('pf-cost').value = p.cost_total;
+    statusEl.textContent = 'Ticket read — double check the fields above before saving, handwriting isn\'t always perfect.';
+  }catch(e){
+    statusEl.textContent = "Couldn't reach the scanning service — enter the fields manually.";
+  }
+}
+
+async function viewPickupPhoto(path){
+  try{
+    const session = getSession();
+    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/authenticated/pickup-photos/${path}`, {
+      headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` }
+    });
+    if(!res.ok) throw new Error('Photo not found.');
+    const blob = await res.blob();
+    window.open(URL.createObjectURL(blob), '_blank');
+  }catch(e){ toast('Could not open photo: ' + e.message, true); }
 }
 
 async function savePickup(){
@@ -566,7 +628,24 @@ async function savePickup(){
     cost_total: parseFloat(document.getElementById('pf-cost').value || 0),
     notes: document.getElementById('pf-notes').value.trim()
   };
+  const fileInput = document.getElementById('pf-photo');
+  const file = fileInput.files[0];
   try{
+    if(file){
+      const session = getSession();
+      const path = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/pickup-photos/${path}`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': file.type || 'application/octet-stream'
+        },
+        body: file
+      });
+      if(!uploadRes.ok){ throw new Error('Photo upload failed — pickup not saved, try again.'); }
+      payload.photo_url = path;
+    }
     await sb('pickups', { method:'POST', body: JSON.stringify(payload) });
     toast('Pickup logged.');
     document.getElementById('pickup-form-slot').innerHTML = '';
