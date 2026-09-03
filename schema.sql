@@ -130,6 +130,18 @@ create policy "client inserts own order" on order_requests for insert with check
 -- Links a delivery back to the order request it fulfilled, so the "Deliver" pipeline can mark it complete
 alter table deliveries add column if not exists order_request_id uuid references order_requests(id);
 
+-- What dock sellers say to expect in coming days (soft/unconfirmed — kept separate from real on-hand stock)
+create table expected_pickups (
+  id uuid primary key default gen_random_uuid(),
+  expected_date date not null,
+  source text,
+  expected_weight_lbs numeric(10,2) not null,
+  notes text,
+  created_at timestamptz not null default now()
+);
+alter table expected_pickups enable row level security;
+create policy "staff full access" on expected_pickups for all using (is_staff()) with check (is_staff());
+
 -- Lock the app down: staff (you) get full access, clients only see their own data via the policies above.
 alter table clients enable row level security;
 alter table pickups enable row level security;
