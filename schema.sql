@@ -142,6 +142,32 @@ create table expected_pickups (
 alter table expected_pickups enable row level security;
 create policy "staff full access" on expected_pickups for all using (is_staff()) with check (is_staff());
 
+-- Split single address into billing vs delivery (keeps old data via backfill)
+alter table clients add column if not exists billing_address text;
+alter table clients add column if not exists delivery_address text;
+update clients set billing_address = coalesce(billing_address, address);
+update clients set delivery_address = coalesce(delivery_address, address);
+
+-- Per-day sack capacity, set based on what the operator expects to have on hand
+create table daily_capacity (
+  capacity_date date primary key,
+  max_sacks integer not null
+);
+alter table daily_capacity enable row level security;
+create policy "staff full access" on daily_capacity for all using (is_staff()) with check (is_staff());
+create policy "authenticated can read capacity" on daily_capacity for select using (auth.role() = 'authenticated');
+
+-- Lets a client (via the portal) check how full a day is without seeing other clients' order details
+create or replace function booked_sacks_for_date(check_date date) returns integer
+  language sql security definer stable
+  set search_path = public
+  as $$
+    select coalesce(sum(requested_sacks),0)::integer
+    from order_requests
+    where requested_date = check_date and status in ('pending','confirmed');
+  $$;
+grant execute on function booked_sacks_for_date(date) to authenticated, anon;
+
 -- Lock the app down: staff (you) get full access, clients only see their own data via the policies above.
 alter table clients enable row level security;
 alter table pickups enable row level security;

@@ -441,12 +441,13 @@ async function renderDashboard(){
     <h3 style="margin-top:8px;margin-bottom:10px;">Sacks Needed — Next 7 Days</h3>
     <div id="week-strip" style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:8px;"><div class="empty-state">Loading…</div></div>`;
   try{
-    const [deliveries, invoices, pickups, allOrders, clients] = await Promise.all([
+    const [deliveries, invoices, pickups, allOrders, clients, capacities] = await Promise.all([
       sb('deliveries?select=id,delivery_date&order=delivery_date.desc'),
       sb('invoices?select=id,total_amount,status'),
       sb('pickups?select=id,pickup_date&order=pickup_date.desc&limit=30'),
       sb('order_requests?select=id,requested_date,requested_sacks,status'),
-      sb('clients?select=id,business_name&order=business_name.asc')
+      sb('clients?select=id,business_name&order=business_name.asc'),
+      sb('daily_capacity?select=*')
     ]);
     window._clientsCache = clients;
     const unpaidTotal = invoices.filter(i => i.status === 'unpaid').reduce((s,i)=>s+Number(i.total_amount),0);
@@ -454,6 +455,14 @@ async function renderDashboard(){
     const deliveriesThisMonth = deliveries.filter(d => d.delivery_date.startsWith(thisMonth)).length;
     const pickupsThisMonth = pickups.filter(p => p.pickup_date.startsWith(thisMonth)).length;
     const pendingCount = allOrders.filter(o => o.status === 'pending').length;
+    const fullDaysAhead = [0,1,2,3,4,5,6].filter(i => {
+      const d = new Date(); d.setDate(d.getDate()+i);
+      const dateStr = d.toISOString().slice(0,10);
+      const cap = capacities.find(c => c.capacity_date === dateStr);
+      if(!cap) return false;
+      const booked = allOrders.filter(o => o.requested_date === dateStr && (o.status === 'pending' || o.status === 'confirmed')).reduce((s,o)=>s+o.requested_sacks,0);
+      return booked >= cap.max_sacks;
+    }).length;
     document.getElementById('stat-grid').innerHTML = `
       <div class="stat-card" style="${pendingCount ? 'border-color:var(--gold);border-width:2px;cursor:pointer;' : ''}" ${pendingCount ? `onclick="location.hash='#schedule'"` : ''}>
         <div class="label">${pendingCount ? 'New Order Requests' : 'Order Requests'}</div>
@@ -461,7 +470,10 @@ async function renderDashboard(){
       </div>
       <div class="stat-card"><div class="label">Unpaid Invoices</div><div class="value">$${unpaidTotal.toFixed(2)}</div></div>
       <div class="stat-card"><div class="label">Deliveries This Month</div><div class="value">${deliveriesThisMonth}</div></div>
-      <div class="stat-card"><div class="label">Pickups This Month</div><div class="value">${pickupsThisMonth}</div></div>
+      <div class="stat-card" style="${fullDaysAhead ? 'border-color:var(--unpaid);border-width:2px;cursor:pointer;' : ''}" ${fullDaysAhead ? `onclick="location.hash='#schedule'"` : ''}>
+        <div class="label">${fullDaysAhead ? 'Days Fully Booked (7d)' : 'Pickups This Month'}</div>
+        <div class="value" style="${fullDaysAhead ? 'color:var(--unpaid);' : ''}">${fullDaysAhead || pickupsThisMonth}</div>
+      </div>
     `;
 
     const relevant = allOrders.filter(o => o.status === 'pending' || o.status === 'confirmed');
@@ -473,14 +485,16 @@ async function renderDashboard(){
       const sacks = dayOrders.reduce((s,o)=>s+o.requested_sacks, 0);
       const hasConfirmed = dayOrders.some(o => o.status === 'confirmed');
       const hasPendingOnly = sacks > 0 && !hasConfirmed;
-      const bg = sacks === 0 ? '#fff' : hasPendingOnly ? 'rgba(242,183,5,0.12)' : 'rgba(46,125,79,0.1)';
-      const border = sacks === 0 ? 'var(--rope)' : hasPendingOnly ? 'var(--gold)' : 'var(--ok)';
+      const cap = capacities.find(c => c.capacity_date === dateStr);
+      const isFull = cap && sacks >= cap.max_sacks;
+      const bg = isFull ? 'rgba(183,72,28,0.12)' : sacks === 0 ? '#fff' : hasPendingOnly ? 'rgba(242,183,5,0.12)' : 'rgba(46,125,79,0.1)';
+      const border = isFull ? 'var(--unpaid)' : sacks === 0 ? 'var(--rope)' : hasPendingOnly ? 'var(--gold)' : 'var(--ok)';
       strip += `
-        <div onclick="goToScheduleDay('${dateStr}')" style="background:${bg};border:1px solid ${border};border-radius:4px;padding:10px 6px;text-align:center;cursor:pointer;">
+        <div onclick="goToScheduleDay('${dateStr}')" style="background:${bg};border:1px solid ${border};${isFull ? 'border-width:2px;' : ''}border-radius:4px;padding:10px 6px;text-align:center;cursor:pointer;">
           <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--water-light);">${i === 0 ? 'Today' : d.toLocaleDateString(undefined,{weekday:'short'})}</div>
           <div style="font-size:11px;color:var(--water-light);margin-bottom:4px;">${d.toLocaleDateString(undefined,{month:'numeric',day:'numeric'})}</div>
-          <div style="font-family:'Oswald',sans-serif;font-size:20px;color:${sacks === 0 ? 'var(--rope-dark)' : 'var(--red)'};">${sacks}</div>
-          <div style="font-size:10px;color:var(--water-light);">sacks</div>
+          <div style="font-family:'Oswald',sans-serif;font-size:20px;color:${sacks === 0 ? 'var(--rope-dark)' : isFull ? 'var(--unpaid)' : 'var(--red)'};">${sacks}${cap ? `<span style="font-size:12px;color:var(--water-light);">/${cap.max_sacks}</span>` : ''}</div>
+          <div style="font-size:10px;color:var(--water-light);">sacks${isFull ? ' — FULL' : ''}</div>
         </div>`;
     }
     document.getElementById('week-strip').innerHTML = strip;
@@ -631,7 +645,8 @@ async function renderClientDetail(id){
         Contact: ${escapeHtml(c.contact_name || '—')}<br>
         Phone: ${escapeHtml(c.phone || '—')}<br>
         Email: ${escapeHtml(c.email || '—')}<br>
-        Address: ${escapeHtml(c.address || '—')}<br>
+        Billing Address: ${escapeHtml(c.billing_address || '—')}<br>
+        Delivery Address: ${escapeHtml(c.delivery_address || '—')}<br>
         Portal: ${c.auth_user_id ? 'Active' : 'Not set up'}
       </p>
     </div>
@@ -717,7 +732,10 @@ function showClientForm(id){
         <div class="field"><label>Phone</label><input id="cf-phone" value="${existing ? escapeHtml(existing.phone||'') : ''}"></div>
         <div class="field"><label>Email</label><input id="cf-email" value="${existing ? escapeHtml(existing.email||'') : ''}"></div>
       </div>
-      <div class="field"><label>Address</label><input id="cf-address" value="${existing ? escapeHtml(existing.address||'') : ''}"></div>
+      <div class="row2">
+        <div class="field"><label>Billing Address</label><input id="cf-billing-address" value="${existing ? escapeHtml(existing.billing_address||'') : ''}"></div>
+        <div class="field"><label>Delivery Address</label><input id="cf-delivery-address" value="${existing ? escapeHtml(existing.delivery_address||'') : ''}"></div>
+      </div>
       <div class="row2">
         <div class="field"><label>Price per lb ($)</label><input id="cf-price" type="number" step="0.01" value="${existing ? existing.price_per_lb : ''}"></div>
         <div class="field"><label>Order Lead Time (hours)</label><input id="cf-lead" type="number" value="${existing ? existing.lead_time_hours : 24}"></div>
@@ -779,7 +797,8 @@ async function saveClient(id){
     contact_name: document.getElementById('cf-contact').value.trim(),
     phone: document.getElementById('cf-phone').value.trim(),
     email: document.getElementById('cf-email').value.trim(),
-    address: document.getElementById('cf-address').value.trim(),
+    billing_address: document.getElementById('cf-billing-address').value.trim(),
+    delivery_address: document.getElementById('cf-delivery-address').value.trim(),
     price_per_lb: parseFloat(document.getElementById('cf-price').value || 0),
     lead_time_hours: parseInt(document.getElementById('cf-lead').value || 24, 10)
   };
@@ -1096,7 +1115,7 @@ async function renderInvoices(){
   `;
   const [invoices, clients] = await Promise.all([
     sb('invoices?select=*&order=created_at.desc'),
-    sb('clients?select=id,business_name,address,email')
+    sb('clients?select=id,business_name,billing_address,email')
   ]);
   window._invoicesCache = invoices;
   window._clientsCache = clients;
@@ -1147,7 +1166,7 @@ function printInvoice(id){
     <div style="margin-bottom:16px;font-size:13px;">
       <strong>Bill To:</strong><br>
       ${client ? escapeHtml(client.business_name) : ''}<br>
-      ${client && client.address ? escapeHtml(client.address) : ''}
+      ${client && client.billing_address ? escapeHtml(client.billing_address) : ''}
     </div>
     <table class="inv-table">
       <thead><tr><th>Description</th><th>Weight (lb)</th><th>Rate</th><th>Amount</th></tr></thead>
@@ -1202,13 +1221,14 @@ async function renderSchedule(){
 
     <div id="schedule-body"></div>
   `;
-  const [orders, clients, pickups, sacks, settings, expected] = await Promise.all([
+  const [orders, clients, pickups, sacks, settings, expected, capacities] = await Promise.all([
     sb('order_requests?select=*&order=requested_date.asc'),
-    sb('clients?select=id,business_name'),
+    sb('clients?select=id,business_name,delivery_address'),
     sb('pickups?select=total_weight_lbs'),
     sb('delivery_sacks?select=weight_lbs'),
     sb('app_settings?select=*'),
-    sb('expected_pickups?select=*&order=expected_date.asc')
+    sb('expected_pickups?select=*&order=expected_date.asc'),
+    sb('daily_capacity?select=*')
   ]);
 
   const avgSackWeight = Number((settings.find(s => s.key === 'avg_sack_weight_lbs') || {}).value || 35);
@@ -1238,6 +1258,7 @@ async function renderSchedule(){
 
   window._expectedPickups = expected;
   renderExpectedList();
+  window._dailyCapacities = capacities;
 
   window._scheduleOrders = orders;
   window._scheduleClients = clients;
@@ -1422,7 +1443,33 @@ function renderCalDay(){
   const dateStr = toDateStr(d);
   document.getElementById('cal-label').textContent = d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'});
   const events = ordersOnDate(dateStr);
+  const bookedSacks = events.filter(o => o.status === 'pending' || o.status === 'confirmed').reduce((s,o)=>s+o.requested_sacks,0);
+  const capRow = (window._dailyCapacities || []).find(c => c.capacity_date === dateStr);
+  const maxSacks = capRow ? capRow.max_sacks : null;
+  const atCapacity = maxSacks !== null && bookedSacks >= maxSacks;
+
+  const routeClients = events.filter(o => o.status === 'confirmed').map(o => window._scheduleClients.find(c => c.id === o.client_id)).filter(c => c && c.delivery_address);
+  const missingAddress = events.filter(o => o.status === 'confirmed').length - routeClients.length;
+
   document.getElementById('schedule-body').innerHTML = `
+    <div style="background:#fff;border:1px solid var(--rope);border-radius:4px;padding:16px;max-width:500px;margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <div style="font-size:13px;">
+          <strong>${bookedSacks}</strong> sacks booked${maxSacks !== null ? ` of <strong>${maxSacks}</strong> capacity` : ' (no capacity limit set)'}
+          ${atCapacity ? `<div style="color:var(--unpaid);font-weight:600;margin-top:2px;">Full for this day — new portal orders will be blocked.</div>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input id="cap-input" type="number" min="0" placeholder="Set cap" value="${maxSacks !== null ? maxSacks : ''}" style="width:80px;padding:5px 8px;border:1px solid var(--rope-dark);border-radius:3px;">
+          <button class="btn small secondary" onclick="saveDailyCapacity('${dateStr}')">Save</button>
+        </div>
+      </div>
+    </div>
+
+    ${routeClients.length > 1 ? `
+      <button class="btn secondary" style="margin-bottom:16px;" onclick="openRoute('${dateStr}')">Open Route in Google Maps (${routeClients.length} stops)</button>
+      ${missingAddress > 0 ? `<div style="font-size:12px;color:var(--water-light);margin:-10px 0 16px;">${missingAddress} confirmed client${missingAddress>1?'s':''} missing a delivery address, left out of the route.</div>` : ''}
+    ` : ''}
+
     <div style="background:#fff;border:1px solid var(--rope);border-radius:4px;padding:18px;max-width:500px;">
       ${events.length ? events.map(o => {
         const client = window._scheduleClients.find(c => c.id === o.client_id);
@@ -1440,6 +1487,31 @@ function renderCalDay(){
       }).join('') : `<div class="empty-state">Nothing scheduled for this day.</div>`}
     </div>
   `;
+}
+
+async function saveDailyCapacity(dateStr){
+  const val = document.getElementById('cap-input').value;
+  try{
+    if(val === ''){
+      await sb(`daily_capacity?capacity_date=eq.${dateStr}`, { method:'DELETE' });
+    } else {
+      await sb('daily_capacity?on_conflict=capacity_date', { method:'POST', headers: { 'Prefer': 'resolution=merge-duplicates' }, body: JSON.stringify({ capacity_date: dateStr, max_sacks: parseInt(val,10) }) });
+    }
+    toast('Capacity saved.');
+    renderSchedule();
+  }catch(e){ toast('Could not save: ' + e.message, true); }
+}
+
+function openRoute(dateStr){
+  const events = ordersOnDate(dateStr).filter(o => o.status === 'confirmed');
+  const addresses = events.map(o => window._scheduleClients.find(c => c.id === o.client_id))
+    .filter(c => c && c.delivery_address)
+    .map(c => encodeURIComponent(c.delivery_address));
+  if(addresses.length < 2){ toast('Need at least 2 confirmed stops with delivery addresses.', true); return; }
+  const destination = addresses[addresses.length - 1];
+  const waypoints = addresses.slice(0, -1).join('|');
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${destination}&waypoints=${waypoints}&travelmode=driving`;
+  window.open(url, '_blank');
 }
 
 function googleCalendarUrl(order, clientName){

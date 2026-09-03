@@ -218,19 +218,53 @@ async function loadInvoices(){
   `).join('');
 }
 
-document.getElementById('order-date').addEventListener('change', checkLeadTime);
-function checkLeadTime(){
+document.getElementById('order-date').addEventListener('change', checkAvailability);
+document.getElementById('order-sacks').addEventListener('input', checkAvailability);
+
+async function checkAvailability(){
   const warnBox = document.getElementById('lead-warning');
   const btn = document.getElementById('order-submit-btn');
   const dateVal = document.getElementById('order-date').value;
+  const sacks = parseInt(document.getElementById('order-sacks').value || 0, 10);
   if(!dateVal || !currentClient){ warnBox.style.display = 'none'; btn.disabled = false; return; }
+
   const requested = new Date(dateVal + 'T00:00:00');
   const minAllowed = new Date(Date.now() + currentClient.lead_time_hours * 60 * 60 * 1000);
   if(requested < minAllowed){
     warnBox.textContent = `This date is inside your ${currentClient.lead_time_hours}-hour lead time — please call it in directly instead of submitting here.`;
     warnBox.style.display = 'block';
     btn.disabled = true;
-  } else {
+    return;
+  }
+
+  try{
+    const capRows = await sb(`daily_capacity?capacity_date=eq.${dateVal}&select=max_sacks`);
+    if(capRows && capRows.length){
+      const maxSacks = capRows[0].max_sacks;
+      const session = getSession();
+      const bookedRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/booked_sacks_for_date`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${session.access_token}` },
+        body: JSON.stringify({ check_date: dateVal })
+      });
+      const booked = await bookedRes.json();
+      const remaining = maxSacks - booked;
+      if(remaining <= 0){
+        warnBox.textContent = `That day is fully booked. Please call directly, or pick another date.`;
+        warnBox.style.display = 'block';
+        btn.disabled = true;
+        return;
+      } else if(sacks > remaining){
+        warnBox.textContent = `Only ${remaining} sack${remaining === 1 ? '' : 's'} still available that day. Lower your order or call directly.`;
+        warnBox.style.display = 'block';
+        btn.disabled = true;
+        return;
+      }
+    }
+    warnBox.style.display = 'none';
+    btn.disabled = false;
+  }catch(e){
+    // If the check itself fails, don't block ordering over it — fail open.
     warnBox.style.display = 'none';
     btn.disabled = false;
   }
@@ -242,7 +276,7 @@ async function submitOrder(){
   const notes = document.getElementById('order-notes').value.trim();
   if(!sacks || sacks < 1){ toast('Enter how many sacks you need.', true); return; }
   if(!date){ toast('Choose a date.', true); return; }
-  checkLeadTime();
+  await checkAvailability();
   if(document.getElementById('order-submit-btn').disabled){ return; }
   try{
     await sb('order_requests', {
