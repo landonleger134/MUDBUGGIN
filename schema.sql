@@ -74,6 +74,11 @@ create index on delivery_sacks (delivery_id);
 create index on invoices (client_id);
 create index on invoices (delivery_id);
 
+-- Payment method tracking (Cash, Check, Other), recorded when an invoice is marked paid
+alter table invoices add column if not exists payment_method text;
+alter table invoices add column if not exists check_number text;
+alter table invoices add column if not exists paid_date date;
+
 -- Simple invoice numbering: MB-000001, MB-000002, ...
 create sequence invoice_number_seq start 1;
 create or replace function next_invoice_number() returns text

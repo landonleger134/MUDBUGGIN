@@ -460,6 +460,25 @@
   </div>
 </div>
 
+<div id="payment-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:90;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:6px;padding:24px;max-width:380px;width:100%;">
+    <h3 style="margin-bottom:14px;">How Was This Paid?</h3>
+    <div class="field"><label>Payment Method</label>
+      <select id="pm-method" onchange="onPaymentMethodChange()">
+        <option value="Cash">Cash</option>
+        <option value="Check">Check</option>
+        <option value="Other">Other</option>
+      </select>
+    </div>
+    <div class="field" id="pm-check-field" style="display:none;"><label>Check Number</label><input id="pm-check-number"></div>
+    <div class="field"><label>Date Paid</label><input id="pm-date" type="date"></div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn" onclick="savePayment()">Mark Paid</button>
+      <button class="btn secondary" onclick="closePaymentModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div id="invoice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:90;align-items:center;justify-content:center;padding:20px;">
   <div style="background:#fff;border-radius:6px;padding:24px;max-width:600px;width:100%;max-height:85vh;overflow-y:auto;">
     <div id="invoice-modal-content"></div>
@@ -1502,8 +1521,8 @@ async function renderInvoices(){
         <option value="paid">Paid</option>
       </select>
     </div>
-    <div class="table-scroll"><table><thead><tr><th>Invoice #</th><th>Date</th><th>Client</th><th>Weight</th><th>Total</th><th>Status</th><th></th></tr></thead>
-    <tbody id="invoices-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table></div>
+    <div class="table-scroll"><table><thead><tr><th>Invoice #</th><th>Date</th><th>Client</th><th>Weight</th><th>Total</th><th>Status</th><th>Payment</th><th></th></tr></thead>
+    <tbody id="invoices-tbody"><tr><td colspan="8">Loading…</td></tr></tbody></table></div>
   `;
   const [invoices, clients] = await Promise.all([
     sb('invoices?select=*&order=created_at.desc'),
@@ -1527,7 +1546,7 @@ function renderInvoicesTable(){
     (!statusFilter || inv.status === statusFilter)
   );
   const tbody = document.getElementById('invoices-tbody');
-  if(!filtered.length){ tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No invoices match.</div></td></tr>`; return; }
+  if(!filtered.length){ tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state">No invoices match.</div></td></tr>`; return; }
   tbody.innerHTML = filtered.map(inv => {
     const client = clients.find(c => c.id === inv.client_id);
     return `<tr>
@@ -1537,24 +1556,66 @@ function renderInvoicesTable(){
       <td data-label="Weight">${Number(inv.total_weight_lbs).toLocaleString()} lb</td>
       <td data-label="Total">$${Number(inv.total_amount).toFixed(2)}</td>
       <td data-label="Status">
-        <select onchange="updateInvoiceStatus('${inv.id}', this.value)">
+        <select onchange="updateInvoiceStatus('${inv.id}', this.value, this)">
           <option value="unpaid" ${inv.status==='unpaid'?'selected':''}>Unpaid</option>
           <option value="paid" ${inv.status==='paid'?'selected':''}>Paid</option>
         </select>
       </td>
+      <td data-label="Payment">${inv.status === 'paid' ? `${escapeHtml(inv.payment_method || '—')}${inv.check_number ? ' #' + escapeHtml(inv.check_number) : ''}` : '—'}</td>
       <td><button class="btn small secondary" onclick="viewInvoice('${inv.id}')">View</button></td>
     </tr>`;
   }).join('');
 }
 
-async function updateInvoiceStatus(id, status){
+async function updateInvoiceStatus(id, status, selectEl){
+  if(status === 'paid'){
+    window._payingInvoiceId = id;
+    window._payingInvoiceSelectEl = selectEl || null;
+    document.getElementById('pm-method').value = 'Cash';
+    document.getElementById('pm-check-field').style.display = 'none';
+    document.getElementById('pm-check-number').value = '';
+    document.getElementById('pm-date').value = new Date().toISOString().slice(0,10);
+    document.getElementById('payment-modal').style.display = 'flex';
+    return;
+  }
   try{
-    await sb(`invoices?id=eq.${id}`, { method:'PATCH', body: JSON.stringify({ status }) });
+    await sb(`invoices?id=eq.${id}`, { method:'PATCH', body: JSON.stringify({ status, payment_method: null, check_number: null, paid_date: null }) });
     const inv = (window._invoicesCache || []).find(i => i.id === id);
-    if(inv) inv.status = status;
+    if(inv){ inv.status = status; inv.payment_method = null; inv.check_number = null; inv.paid_date = null; }
     toast('Invoice updated.');
     renderInvoicesTable();
   }catch(e){ toast('Update failed: ' + e.message, true); }
+}
+
+function onPaymentMethodChange(){
+  document.getElementById('pm-check-field').style.display = document.getElementById('pm-method').value === 'Check' ? 'block' : 'none';
+}
+
+function closePaymentModal(){
+  document.getElementById('payment-modal').style.display = 'none';
+  if(window._payingInvoiceSelectEl){
+    window._payingInvoiceSelectEl.value = 'unpaid';
+  }
+  window._payingInvoiceId = null;
+  window._payingInvoiceSelectEl = null;
+}
+
+async function savePayment(){
+  const id = window._payingInvoiceId;
+  const method = document.getElementById('pm-method').value;
+  const checkNumber = method === 'Check' ? document.getElementById('pm-check-number').value.trim() : null;
+  const paidDate = document.getElementById('pm-date').value;
+  try{
+    await sb(`invoices?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'paid', payment_method: method, check_number: checkNumber || null, paid_date: paidDate || null })
+    });
+    const inv = (window._invoicesCache || []).find(i => i.id === id);
+    if(inv){ inv.status = 'paid'; inv.payment_method = method; inv.check_number = checkNumber; inv.paid_date = paidDate; }
+    toast('Marked paid.');
+    closePaymentModal();
+    renderInvoicesTable();
+  }catch(e){ toast('Could not save: ' + e.message, true); }
 }
 
 async function deleteInvoice(id){
@@ -1634,11 +1695,12 @@ function buildInvoiceHtml(inv, client, sacks){
           <div><strong>Invoice Date:</strong> ${invDate}</div>
           <div><strong>Total Weight:</strong> ${totalWeight.toLocaleString()} lb</div>
           <div><span class="idoc-status ${inv.status}">${inv.status}</span></div>
+          ${inv.status === 'paid' ? `<div style="margin-top:4px;">Paid via ${escapeHtml(inv.payment_method || '—')}${inv.check_number ? ' #' + escapeHtml(inv.check_number) : ''}${inv.paid_date ? ' on ' + inv.paid_date : ''}</div>` : ''}
         </div>
       </div>
 
       <table class="idoc-table">
-        <thead><tr><th>Description</th><th class="num">Weight</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
+        <thead><tr><th>Sack #</th><th class="num">Pounds</th><th class="num">Price per lb</th><th class="num">Total</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
 
