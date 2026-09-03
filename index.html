@@ -233,6 +233,7 @@
   }
 
   .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:8px;}
+  @media (min-width:801px){ #stat-grid{grid-template-columns:repeat(3,1fr);} }
   .stat-card{background:#fff;border:1px solid var(--rope);border-radius:4px;padding:18px;}
   .stat-card .label{font-size:12px;color:var(--water-light);margin-bottom:6px;}
   .stat-card .value{font-family:'Oswald',sans-serif;font-size:26px;color:var(--red);}
@@ -487,6 +488,7 @@
     <div id="invoice-modal-content"></div>
     <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
       <button class="btn" onclick="printInvoice(window._viewingInvoiceId)">Print / Save as PDF</button>
+      <button class="btn secondary" onclick="textInvoiceToClient()">📱 Text to Client</button>
       <button class="btn secondary" onclick="closeInvoiceModal()">Close</button>
       <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);margin-left:auto;" onclick="deleteInvoice(window._viewingInvoiceId)">Delete Invoice</button>
     </div>
@@ -722,7 +724,7 @@ async function renderDashboard(){
   try{
     const [deliveries, invoices, pickups, allOrders, clients, capacities] = await Promise.all([
       sb('deliveries?select=id,delivery_date&order=delivery_date.desc'),
-      sb('invoices?select=id,total_amount,status'),
+      sb('invoices?select=id,total_amount,status,created_at'),
       sb('pickups?select=id,pickup_date&order=pickup_date.desc&limit=30'),
       sb('order_requests?select=id,requested_date,requested_sacks,status'),
       sb('clients?select=id,business_name,price_per_lb&order=business_name.asc'),
@@ -731,6 +733,9 @@ async function renderDashboard(){
     window._clientsCache = clients;
     const unpaidTotal = invoices.filter(i => i.status === 'unpaid').reduce((s,i)=>s+Number(i.total_amount),0);
     const thisMonth = new Date().toISOString().slice(0,7);
+    const thisYear = new Date().toISOString().slice(0,4);
+    const revenueThisMonth = invoices.filter(i => i.created_at && i.created_at.startsWith(thisMonth)).reduce((s,i)=>s+Number(i.total_amount),0);
+    const revenueThisYear = invoices.filter(i => i.created_at && i.created_at.startsWith(thisYear)).reduce((s,i)=>s+Number(i.total_amount),0);
     const deliveriesThisMonth = deliveries.filter(d => d.delivery_date.startsWith(thisMonth)).length;
     const pickupsThisMonth = pickups.filter(p => p.pickup_date.startsWith(thisMonth)).length;
     const pendingCount = allOrders.filter(o => o.status === 'pending').length;
@@ -748,6 +753,8 @@ async function renderDashboard(){
         <div class="value" style="${pendingCount ? 'color:#8a6600;' : ''}">${pendingCount}</div>
       </div>
       <div class="stat-card"><div class="label">Unpaid Invoices</div><div class="value">$${unpaidTotal.toFixed(2)}</div></div>
+      <div class="stat-card"><div class="label">Revenue This Month</div><div class="value">$${revenueThisMonth.toFixed(2)}</div></div>
+      <div class="stat-card"><div class="label">Revenue This Year</div><div class="value">$${revenueThisYear.toFixed(2)}</div></div>
       <div class="stat-card"><div class="label">Deliveries This Month</div><div class="value">${deliveriesThisMonth}</div></div>
       <div class="stat-card" style="${fullDaysAhead ? 'border-color:var(--unpaid);border-width:2px;cursor:pointer;' : ''}" ${fullDaysAhead ? `onclick="location.hash='#schedule'"` : ''}>
         <div class="label">${fullDaysAhead ? 'Days Fully Booked (7d)' : 'Dock Pick Ups This Month'}</div>
@@ -1481,8 +1488,9 @@ async function saveDelivery(){
     const totalWeight = weights.reduce((s,w)=>s+w,0);
     const totalAmount = totalWeight * price;
     const invoiceNumber = 'MB-' + Date.now().toString().slice(-8); // fallback if next_invoice_number() RPC isn't set up as a default
-    await sb('invoices', {
+    const [newInvoice] = await sb('invoices', {
       method:'POST',
+      headers: { 'Prefer': 'return=representation' },
       body: JSON.stringify({
         invoice_number: invoiceNumber,
         delivery_id: delivery.id,
@@ -1505,6 +1513,7 @@ async function saveDelivery(){
     hideKeypad();
     renderDeliveries();
     refreshScheduleBadge();
+    if(newInvoice) viewInvoice(newInvoice.id);
   }catch(e){ toast('Save failed: ' + e.message, true); }
 }
 
@@ -1754,7 +1763,7 @@ async function fetchInvoiceBundle(id){
   const invoices = await sb(`invoices?id=eq.${id}&select=*`);
   const inv = invoices[0];
   const [clients, sacks] = await Promise.all([
-    sb(`clients?id=eq.${inv.client_id}&select=id,business_name,billing_address,email`),
+    sb(`clients?id=eq.${inv.client_id}&select=id,business_name,billing_address,email,phone`),
     sb(`delivery_sacks?delivery_id=eq.${inv.delivery_id}&select=*&order=sack_number.asc`)
   ]);
   return { inv, client: clients[0], sacks };
@@ -1768,6 +1777,7 @@ async function viewInvoice(id){
   window._viewingInvoiceId = id;
   try{
     const { inv, client, sacks } = await fetchInvoiceBundle(id);
+    window._viewingInvoiceClient = client;
     content.innerHTML = buildInvoiceHtml(inv, client, sacks);
   }catch(e){
     content.innerHTML = `<div class="empty-state">Could not load invoice: ${e.message}</div>`;
@@ -1777,6 +1787,15 @@ async function viewInvoice(id){
 function closeInvoiceModal(){
   document.getElementById('invoice-modal').style.display = 'none';
   window._viewingInvoiceId = null;
+  window._viewingInvoiceClient = null;
+}
+
+function textInvoiceToClient(){
+  const client = window._viewingInvoiceClient;
+  if(!client || !client.phone){ toast("This client doesn't have a phone number on file.", true); return; }
+  const digits = client.phone.replace(/[^0-9+]/g, '');
+  const message = `Hi ${client.business_name}, your Mud Buggin LLC invoice is ready — view it and past invoices anytime at ${PORTAL_URL}`;
+  window.location.href = `sms:${digits}?body=${encodeURIComponent(message)}`;
 }
 
 async function printInvoice(id){
