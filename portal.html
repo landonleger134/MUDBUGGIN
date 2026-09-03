@@ -283,7 +283,23 @@ async function submitNewPassword(){
   }catch(e){ msgEl.textContent = 'Could not reach the server.'; }
 }
 
-async function sb(path, options = {}){
+async function refreshSession(){
+  const session = getSession();
+  if(!session || !session.refresh_token) return false;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+      body: JSON.stringify({ refresh_token: session.refresh_token })
+    });
+    if(!res.ok) return false;
+    const data = await res.json();
+    setSession({ access_token: data.access_token, refresh_token: data.refresh_token });
+    return true;
+  }catch(e){ return false; }
+}
+
+async function sb(path, options = {}, isRetry = false){
   const session = getSession();
   const headers = Object.assign({
     'Content-Type':'application/json',
@@ -291,7 +307,12 @@ async function sb(path, options = {}){
     'Authorization': `Bearer ${session ? session.access_token : SUPABASE_ANON_KEY}`
   }, options.headers || {});
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, Object.assign({}, options, { headers }));
-  if(res.status === 401){ clearSession(); location.reload(); return null; }
+  if(res.status === 401){
+    if(!isRetry && await refreshSession()){
+      return sb(path, options, true);
+    }
+    clearSession(); location.reload(); return null;
+  }
   if(!res.ok){ const text = await res.text(); throw new Error(`Request failed (${res.status}): ${text}`); }
   const text = await res.text();
   if(!text) return null;

@@ -370,24 +370,32 @@
 
     #week-strip{grid-template-columns:repeat(2,1fr) !important;gap:8px;}
 
-    /* Tables become stacked cards instead of scrolling sideways */
+    /* Tables become stacked cards instead of scrolling sideways — except the invoice document, which stays a real table */
     .table-scroll{overflow-x:visible;}
-    table{min-width:0;width:100%;}
-    table, thead, tbody, tr, td{display:block;width:100%;}
-    thead{display:none;}
-    tbody tr{
+    table:not(.idoc-table){min-width:0;width:100%;}
+    table:not(.idoc-table), table:not(.idoc-table) thead, table:not(.idoc-table) tbody, table:not(.idoc-table) tr, table:not(.idoc-table) td{display:block;width:100%;}
+    table:not(.idoc-table) thead{display:none;}
+    table:not(.idoc-table) tbody tr{
       border:1px solid var(--rope);border-radius:4px;
       margin-bottom:10px;padding:10px 12px;background:#fff;
     }
-    tbody tr:hover td{background:transparent;}
-    td{border:none;padding:5px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;text-align:right;}
-    td:empty{display:none;}
-    td::before{
+    table:not(.idoc-table) tbody tr:hover td{background:transparent;}
+    table:not(.idoc-table) td{border:none;padding:5px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;text-align:right;}
+    table:not(.idoc-table) td:empty{display:none;}
+    table:not(.idoc-table) td::before{
       content:attr(data-label);font-weight:600;color:var(--water-light);
       font-size:10px;text-transform:uppercase;letter-spacing:0.04em;
       text-align:left;flex-shrink:0;
     }
-    td[data-label=""]::before, td:not([data-label])::before{content:none;}
+    table:not(.idoc-table) td[data-label=""]::before, table:not(.idoc-table) td:not([data-label])::before{content:none;}
+
+    /* Invoice document: keep it a real compact table, scrollable if it's ever too narrow */
+    .invoice-doc{padding:24px 18px;}
+    .invoice-doc table.idoc-table{display:table;width:100%;}
+    .invoice-doc table.idoc-table thead{display:table-header-group;}
+    .invoice-doc table.idoc-table tbody{display:table-row-group;}
+    .invoice-doc table.idoc-table tr{display:table-row;}
+    .invoice-doc table.idoc-table td, .invoice-doc table.idoc-table th{display:table-cell;}
   }
 </style>
 </head>
@@ -565,7 +573,23 @@ function handleLogout(){
   location.reload();
 }
 
-async function sb(path, options = {}){
+async function refreshSession(){
+  const session = getSession();
+  if(!session || !session.refresh_token) return false;
+  try{
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+      body: JSON.stringify({ refresh_token: session.refresh_token })
+    });
+    if(!res.ok) return false;
+    const data = await res.json();
+    setSession({ access_token: data.access_token, refresh_token: data.refresh_token, email: session.email });
+    return true;
+  }catch(e){ return false; }
+}
+
+async function sb(path, options = {}, isRetry = false){
   const session = getSession();
   const headers = Object.assign({
     'Content-Type':'application/json',
@@ -574,7 +598,12 @@ async function sb(path, options = {}){
   }, options.headers || {});
   if(options.prefer){ headers['Prefer'] = options.prefer; }
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, Object.assign({}, options, { headers }));
-  if(res.status === 401){ clearSession(); location.reload(); return null; }
+  if(res.status === 401){
+    if(!isRetry && await refreshSession()){
+      return sb(path, options, true);
+    }
+    clearSession(); location.reload(); return null;
+  }
   if(!res.ok){
     const text = await res.text();
     throw new Error(`Request failed (${res.status}): ${text}`);
@@ -1760,10 +1789,12 @@ function buildInvoiceHtml(inv, client, sacks){
         </div>
       </div>
 
-      <table class="idoc-table">
-        <thead><tr><th>Sack #</th><th class="num">Pounds</th><th class="num">Price per lb</th><th class="num">Total</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div style="overflow-x:auto;">
+        <table class="idoc-table">
+          <thead><tr><th>Sack #</th><th class="num">Pounds</th><th class="num">Price per lb</th><th class="num">Total</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
 
       <div class="idoc-totals">
         <div class="idoc-totals-box">
