@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Mud Buggin LLC — Client Portal</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#C41E2A">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Mud Buggin">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -40,7 +47,8 @@
   .rate-line .label{font-size:13px;color:var(--water-light);}
   .rate-line .value{font-family:'Oswald',sans-serif;font-size:18px;color:var(--red);}
 
-  table{width:100%;border-collapse:collapse;}
+  table{width:100%;min-width:420px;border-collapse:collapse;}
+  .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--water-light);padding:8px 6px;border-bottom:2px solid var(--rope-dark);}
   td{padding:9px 6px;border-bottom:1px solid var(--rope);font-size:13px;}
   .status-pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;}
@@ -73,13 +81,17 @@
     <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
     <button onclick="handleLogin()">Log In</button>
     <div id="login-error"></div>
+    <button id="a2hs-btn-login" type="button" onclick="showAddToHomeScreen()" style="background:transparent;color:var(--water);border:1px solid var(--rope-dark);margin-top:14px;">📱 Add This to Your Phone's Home Screen</button>
   </div>
 </div>
 
 <div id="app">
   <header class="top">
     <div><h1>MUD BUGGIN LLC</h1><div class="sub">Client Portal</div></div>
-    <button id="logout-btn" onclick="handleLogout()">Log Out</button>
+    <div style="display:flex;gap:8px;">
+      <button id="a2hs-btn-app" type="button" onclick="showAddToHomeScreen()" style="background:transparent;border:1px solid var(--rope-dark);padding:7px 12px;border-radius:3px;font-size:12px;">📱 Add to Home Screen</button>
+      <button id="logout-btn" onclick="handleLogout()">Log Out</button>
+    </div>
   </header>
 
   <div class="card">
@@ -99,18 +111,26 @@
 
   <div class="card">
     <h2>Your Order Requests</h2>
-    <table><thead><tr><th>Needed</th><th>Sacks</th><th>Status</th></tr></thead>
-    <tbody id="orders-tbody"><tr><td colspan="3">Loading…</td></tr></tbody></table>
+    <div class="table-scroll"><table><thead><tr><th>Needed</th><th>Sacks</th><th>Status</th></tr></thead>
+    <tbody id="orders-tbody"><tr><td colspan="3">Loading…</td></tr></tbody></table></div>
   </div>
 
   <div class="card">
     <h2>Your Invoices</h2>
-    <table><thead><tr><th>Invoice #</th><th>Date</th><th>Weight</th><th>Total</th><th>Status</th></tr></thead>
-    <tbody id="invoices-tbody"><tr><td colspan="5">Loading…</td></tr></tbody></table>
+    <div class="table-scroll"><table><thead><tr><th>Invoice #</th><th>Date</th><th>Weight</th><th>Total</th><th>Status</th></tr></thead>
+    <tbody id="invoices-tbody"><tr><td colspan="5">Loading…</td></tr></tbody></table></div>
   </div>
 </div>
 
 <div id="toast"></div>
+
+<div id="a2hs-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:6px;padding:24px;max-width:360px;width:100%;">
+    <h2 style="font-size:17px;color:var(--red);margin-bottom:12px;">Add to Home Screen</h2>
+    <div id="a2hs-content" style="font-size:14px;line-height:1.7;color:var(--black);"></div>
+    <button class="btn" style="width:100%;margin-top:16px;" onclick="document.getElementById('a2hs-modal').style.display='none'">Got it</button>
+  </div>
+</div>
 
 <script>
 const SUPABASE_URL = "https://rufbtrooanmqknhugvxi.supabase.co";
@@ -289,6 +309,55 @@ async function submitOrder(){
     document.getElementById('order-notes').value = '';
     loadOrders();
   }catch(e){ toast('Could not submit: ' + e.message, true); }
+}
+
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+});
+
+function showAddToHomeScreen(){
+  const content = document.getElementById('a2hs-content');
+  const ua = navigator.userAgent;
+  const isIOS = /iPhone|iPad|iPod/.test(ua);
+  const isAndroid = /Android/.test(ua);
+
+  if(deferredInstallPrompt){
+    content.innerHTML = `Tap below to install this as an app on your phone.`;
+    document.getElementById('a2hs-modal').style.display = 'flex';
+    const modal = document.getElementById('a2hs-modal');
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.style.width = '100%';
+    btn.style.marginTop = '10px';
+    btn.textContent = 'Install App';
+    btn.onclick = async () => {
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      modal.style.display = 'none';
+    };
+    document.getElementById('a2hs-content').after(btn);
+    return;
+  }
+
+  if(isIOS){
+    content.innerHTML = `
+      1. Tap the <strong>Share</strong> icon (square with an arrow) at the bottom of Safari.<br><br>
+      2. Scroll down and tap <strong>"Add to Home Screen."</strong><br><br>
+      3. Tap <strong>Add</strong> in the top corner.<br><br>
+      It'll show up as an icon on your home screen, just like a regular app.`;
+  } else if(isAndroid){
+    content.innerHTML = `
+      1. Tap the <strong>⋮</strong> menu (top right of Chrome).<br><br>
+      2. Tap <strong>"Add to Home screen"</strong> or <strong>"Install app."</strong><br><br>
+      3. Confirm by tapping <strong>Add</strong>.<br><br>
+      It'll show up as an icon on your home screen, just like a regular app.`;
+  } else {
+    content.innerHTML = `Open this page on your phone's browser, then use the browser's menu to find "Add to Home Screen" (Safari) or "Install app" (Chrome).`;
+  }
+  document.getElementById('a2hs-modal').style.display = 'flex';
 }
 
 document.getElementById('login-password').addEventListener('keydown', e => { if(e.key === 'Enter') handleLogin(); });

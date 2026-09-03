@@ -141,7 +141,7 @@
 
   .btn{
     display:inline-block;
-    padding:9px 16px;
+    padding:10px 16px;
     background:var(--red);
     color:#fff;
     border:none;
@@ -152,9 +152,10 @@
   .btn:hover{background:var(--red-dark);}
   .btn.secondary{background:transparent;color:var(--water);border:1px solid var(--rope-dark);}
   .btn.secondary:hover{border-color:var(--water);}
-  .btn.small{padding:5px 10px;font-size:12px;}
+  .btn.small{padding:7px 11px;font-size:12px;}
 
-  table{width:100%;border-collapse:collapse;margin-top:6px;}
+  .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:6px;}
+  table{width:100%;min-width:560px;border-collapse:collapse;}
   th{
     text-align:left;
     font-size:11px;
@@ -192,10 +193,10 @@
   .field label{display:block;font-size:12px;color:var(--water-light);margin-bottom:4px;}
   .field input,.field select,.field textarea{
     width:100%;
-    padding:8px 10px;
+    padding:10px 10px;
     border:1px solid var(--rope-dark);
     border-radius:3px;
-    font-size:14px;
+    font-size:16px;
     font-family:inherit;
   }
   .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
@@ -255,13 +256,25 @@
   @media (max-width:800px){
     #app.visible{flex-direction:column;}
     #sidebar{width:100%;min-height:auto;flex-direction:row;overflow-x:auto;}
-    .brand{border-bottom:none;}
+    .brand{border-bottom:none;padding:16px 14px;}
+    .brand .name{font-size:14px;}
     nav{display:flex;padding:0;}
-    nav a{border-left:none;border-bottom:3px solid transparent;white-space:nowrap;}
+    nav a{border-left:none;border-bottom:3px solid transparent;white-space:nowrap;padding:12px 14px;}
     nav a.active{border-left:none;border-bottom-color:var(--gold);}
-    #main{padding:22px 18px;}
-    .stat-grid{grid-template-columns:1fr;}
+    #main{padding:18px 14px;}
+    .page-head h1{font-size:21px;}
+    .page-head{flex-wrap:wrap;gap:10px;}
+    .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px;}
+    .stat-card{padding:12px;}
+    .stat-card .value{font-size:20px;}
     .row2{grid-template-columns:1fr;}
+    .panel{padding:16px;}
+    #week-strip{overflow-x:auto;-webkit-overflow-scrolling:touch;grid-template-columns:repeat(7,70px) !important;}
+    #schedule-body > div[style*="grid-template-columns:repeat(7"]{
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+      grid-template-columns:repeat(7,84px) !important;
+    }
   }
 </style>
 </head>
@@ -446,7 +459,7 @@ async function renderDashboard(){
       sb('invoices?select=id,total_amount,status'),
       sb('pickups?select=id,pickup_date&order=pickup_date.desc&limit=30'),
       sb('order_requests?select=id,requested_date,requested_sacks,status'),
-      sb('clients?select=id,business_name&order=business_name.asc'),
+      sb('clients?select=id,business_name,price_per_lb&order=business_name.asc'),
       sb('daily_capacity?select=*')
     ]);
     window._clientsCache = clients;
@@ -521,17 +534,18 @@ function showQuickOrderForm(){
       <p style="font-size:13px;color:var(--water-light);margin-bottom:10px;">For an order taken by phone. Since you're the one taking it, it goes straight to Confirmed — no separate approval step.</p>
       <div class="row2">
         <div class="field"><label>Client</label>
-          <select id="qo-client">
+          <select id="qo-client" onchange="onQuickOrderClientChange()">
             <option value="">Select client…</option>
-            ${clients.map(c => `<option value="${c.id}">${escapeHtml(c.business_name)}</option>`).join('')}
+            ${clients.map(c => `<option value="${c.id}" data-price="${c.price_per_lb}">${escapeHtml(c.business_name)}</option>`).join('')}
           </select>
         </div>
         <div class="field"><label>Sacks</label><input id="qo-sacks" type="number" min="1"></div>
       </div>
       <div class="row2">
         <div class="field"><label>Date Needed</label><input id="qo-date" type="date" value="${today}"></div>
-        <div class="field"><label>Notes (optional)</label><input id="qo-notes" placeholder="e.g. call before dropping off"></div>
+        <div class="field"><label>Price per lb ($) <span style="font-weight:400;color:var(--water-light);">— only if different from usual</span></label><input id="qo-price" type="number" step="0.01"></div>
       </div>
+      <div class="field"><label>Notes (optional)</label><input id="qo-notes" placeholder="e.g. call before dropping off"></div>
       <button class="btn" onclick="saveQuickOrder()">Confirm Order</button>
       <button class="btn secondary" onclick="document.getElementById('quick-order-slot').innerHTML=''">Cancel</button>
     </div>
@@ -539,19 +553,25 @@ function showQuickOrderForm(){
   document.getElementById('qo-client').focus();
 }
 
+function onQuickOrderClientChange(){
+  const sel = document.getElementById('qo-client');
+  const opt = sel.options[sel.selectedIndex];
+  document.getElementById('qo-price').placeholder = opt.dataset.price ? `Usual: $${opt.dataset.price}/lb` : '';
+}
+
 async function saveQuickOrder(){
   const clientId = document.getElementById('qo-client').value;
   const sacks = parseInt(document.getElementById('qo-sacks').value || 0, 10);
   const date = document.getElementById('qo-date').value;
   const notes = document.getElementById('qo-notes').value.trim();
+  const priceOverride = document.getElementById('qo-price').value;
   if(!clientId){ toast('Choose a client.', true); return; }
   if(!sacks || sacks < 1){ toast('Enter how many sacks.', true); return; }
   if(!date){ toast('Choose a date.', true); return; }
   try{
-    await sb('order_requests', {
-      method: 'POST',
-      body: JSON.stringify({ client_id: clientId, requested_sacks: sacks, requested_date: date, notes, status: 'confirmed' })
-    });
+    const payload = { client_id: clientId, requested_sacks: sacks, requested_date: date, notes, status: 'confirmed' };
+    if(priceOverride !== '') payload.agreed_price_per_lb = parseFloat(priceOverride);
+    await sb('order_requests', { method: 'POST', body: JSON.stringify(payload) });
     toast('Order confirmed.');
     document.getElementById('quick-order-slot').innerHTML = '';
     renderDashboard();
@@ -568,14 +588,17 @@ async function renderClients(){
     <div class="page-head"><h1>Clients</h1><button class="btn" onclick="showClientForm()">Add Client</button></div>
     <div class="page-head-bar"></div>
     <div id="client-form-slot"></div>
-    <table><thead><tr><th>Business</th><th>Contact</th><th>Phone</th><th>$/lb</th><th>Lead Time</th><th></th></tr></thead>
-    <tbody id="clients-tbody"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+    <div id="bulk-price-slot"></div>
+    <div class="table-scroll"><table><thead><tr><th><input type="checkbox" id="select-all-clients" onchange="toggleSelectAllClients(this)"></th><th>Business</th><th>Contact</th><th>Phone</th><th>$/lb</th><th>Lead Time</th><th></th></tr></thead>
+    <tbody id="clients-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table></div>
   `;
+  window._selectedClientIds = new Set();
   const clients = await sb('clients?select=*&order=business_name.asc');
   const tbody = document.getElementById('clients-tbody');
-  if(!clients.length){ tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No clients yet. Add your first one above.</div></td></tr>`; return; }
+  if(!clients.length){ tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No clients yet. Add your first one above.</div></td></tr>`; return; }
   tbody.innerHTML = clients.map(c => `
     <tr>
+      <td><input type="checkbox" class="client-select-box" value="${c.id}" onchange="onClientSelectChange()"></td>
       <td><a href="#clients/${c.id}" style="color:var(--red);font-weight:600;text-decoration:none;">${escapeHtml(c.business_name)}</a></td>
       <td>${escapeHtml(c.contact_name || '—')}</td>
       <td>${escapeHtml(c.phone || '—')}</td>
@@ -592,6 +615,41 @@ async function renderClients(){
     showClientForm(window._openEditAfterNav);
     window._openEditAfterNav = null;
   }
+}
+
+function toggleSelectAllClients(cb){
+  document.querySelectorAll('.client-select-box').forEach(box => { box.checked = cb.checked; });
+  onClientSelectChange();
+}
+
+function onClientSelectChange(){
+  const checked = Array.from(document.querySelectorAll('.client-select-box:checked')).map(b => b.value);
+  window._selectedClientIds = new Set(checked);
+  const slot = document.getElementById('bulk-price-slot');
+  if(!checked.length){ slot.innerHTML = ''; return; }
+  slot.innerHTML = `
+    <div class="panel" style="max-width:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <strong>${checked.length} client${checked.length>1?'s':''} selected</strong>
+      <label style="font-size:13px;">New price per lb ($)</label>
+      <input id="bulk-price-input" type="number" step="0.01" style="width:90px;">
+      <button class="btn small" onclick="applyBulkPrice()">Apply to Selected</button>
+      <button class="btn small secondary" onclick="document.getElementById('select-all-clients').checked=false; toggleSelectAllClients(document.getElementById('select-all-clients'));">Clear Selection</button>
+    </div>
+  `;
+}
+
+async function applyBulkPrice(){
+  const ids = Array.from(window._selectedClientIds || []);
+  const price = parseFloat(document.getElementById('bulk-price-input').value);
+  if(!ids.length){ toast('Select at least one client.', true); return; }
+  if(isNaN(price) || price < 0){ toast('Enter a valid price.', true); return; }
+  if(!confirm(`Set price to $${price.toFixed(2)}/lb for ${ids.length} client${ids.length>1?'s':''}? This won't change any past invoices.`)) return;
+  try{
+    const idList = ids.join(',');
+    await sb(`clients?id=in.(${idList})`, { method:'PATCH', body: JSON.stringify({ price_per_lb: price }) });
+    toast('Price updated.');
+    renderClients();
+  }catch(e){ toast('Update failed: ' + e.message, true); }
 }
 
 async function deleteClient(id, name){
@@ -652,19 +710,19 @@ async function renderClientDetail(id){
     </div>
 
     <h3 style="margin-top:26px;margin-bottom:10px;">Order Requests</h3>
-    <table><thead><tr><th>Needed</th><th>Sacks</th><th>Status</th><th>Notes</th></tr></thead>
+    <div class="table-scroll"><table><thead><tr><th>Needed</th><th>Sacks</th><th>Status</th><th>Notes</th></tr></thead>
     <tbody>${orders.length ? orders.map(o => `
       <tr><td>${o.requested_date}</td><td>${o.requested_sacks}</td><td><span class="status-pill status-${o.status}">${o.status}</span></td><td>${escapeHtml(o.notes || '—')}</td></tr>
-    `).join('') : `<tr><td colspan="4"><div class="empty-state">No order requests from this client yet.</div></td></tr>`}</tbody></table>
+    `).join('') : `<tr><td colspan="4"><div class="empty-state">No order requests from this client yet.</div></td></tr>`}</tbody></table></div>
 
     <h3 style="margin-top:26px;margin-bottom:10px;">Deliveries</h3>
-    <table><thead><tr><th>Date</th><th>$/lb</th><th>Status</th></tr></thead>
+    <div class="table-scroll"><table><thead><tr><th>Date</th><th>$/lb</th><th>Status</th></tr></thead>
     <tbody>${deliveries.length ? deliveries.map(d => `
       <tr><td>${d.delivery_date}</td><td>$${Number(d.price_per_lb).toFixed(2)}</td><td><span class="status-pill status-${d.status}">${d.status}</span></td></tr>
-    `).join('') : `<tr><td colspan="3"><div class="empty-state">No deliveries logged for this client yet.</div></td></tr>`}</tbody></table>
+    `).join('') : `<tr><td colspan="3"><div class="empty-state">No deliveries logged for this client yet.</div></td></tr>`}</tbody></table></div>
 
     <h3 style="margin-top:26px;margin-bottom:10px;">Invoices</h3>
-    <table><thead><tr><th>Invoice #</th><th>Date</th><th>Weight</th><th>Total</th><th>Status</th><th></th></tr></thead>
+    <div class="table-scroll"><table><thead><tr><th>Invoice #</th><th>Date</th><th>Weight</th><th>Total</th><th>Status</th><th></th></tr></thead>
     <tbody>${invoices.length ? invoices.map(inv => `
       <tr>
         <td>${inv.invoice_number}</td><td>${inv.created_at.slice(0,10)}</td>
@@ -672,7 +730,7 @@ async function renderClientDetail(id){
         <td><span class="status-pill status-${inv.status}">${inv.status}</span></td>
         <td><button class="btn small secondary" onclick="printInvoice('${inv.id}')">Print</button></td>
       </tr>
-    `).join('') : `<tr><td colspan="6"><div class="empty-state">No invoices for this client yet.</div></td></tr>`}</tbody></table>
+    `).join('') : `<tr><td colspan="6"><div class="empty-state">No invoices for this client yet.</div></td></tr>`}</tbody></table></div>
   `;
 }
 
@@ -822,8 +880,8 @@ async function renderPickups(){
     <div class="page-head"><h1>Pickups</h1><button class="btn" onclick="showPickupForm()">Log Pickup</button></div>
     <div class="page-head-bar"></div>
     <div id="pickup-form-slot"></div>
-    <table><thead><tr><th>Date</th><th>Source</th><th>Weight (lb)</th><th>Cost</th><th>Notes</th><th>Ticket</th></tr></thead>
-    <tbody id="pickups-tbody"><tr><td colspan="6">Loading…</td></tr></tbody></table>
+    <div class="table-scroll"><table><thead><tr><th>Date</th><th>Source</th><th>Weight (lb)</th><th>Cost</th><th>Notes</th><th>Ticket</th></tr></thead>
+    <tbody id="pickups-tbody"><tr><td colspan="6">Loading…</td></tr></tbody></table></div>
   `;
   const pickups = await sb('pickups?select=*&order=pickup_date.desc');
   const tbody = document.getElementById('pickups-tbody');
@@ -962,8 +1020,8 @@ async function renderDeliveries(){
     <div class="page-head"><h1>Deliveries</h1><button class="btn" onclick="showDeliveryForm()">New Delivery</button></div>
     <div class="page-head-bar"></div>
     <div id="delivery-form-slot"></div>
-    <table><thead><tr><th>Date</th><th>Client</th><th>Sacks</th><th>Weight (lb)</th><th>$/lb</th><th>Total</th><th>Status</th></tr></thead>
-    <tbody id="deliveries-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table>
+    <div class="table-scroll"><table><thead><tr><th>Date</th><th>Client</th><th>Sacks</th><th>Weight (lb)</th><th>$/lb</th><th>Total</th><th>Status</th></tr></thead>
+    <tbody id="deliveries-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table></div>
   `;
   const [deliveries, sacks, clients] = await Promise.all([
     sb('deliveries?select=*&order=delivery_date.desc'),
@@ -1015,7 +1073,7 @@ function showDeliveryForm(fromOrder){
         </div>
         <div class="field"><label>Date</label><input id="df-date" type="date" value="${today}"></div>
       </div>
-      <div class="field"><label>Price per lb for this delivery ($)</label><input id="df-price" type="number" step="0.01" value="${client ? client.price_per_lb : ''}"></div>
+      <div class="field"><label>Price per lb for this delivery ($)</label><input id="df-price" type="number" step="0.01" value="${fromOrder && fromOrder.agreed_price_per_lb ? fromOrder.agreed_price_per_lb : (client ? client.price_per_lb : '')}"></div>
       <div class="field">
         <label>Sacks</label>
         <div id="sack-rows"></div>
@@ -1110,8 +1168,8 @@ async function renderInvoices(){
   main.innerHTML = `
     <div class="page-head"><h1>Invoices</h1></div>
     <div class="page-head-bar"></div>
-    <table><thead><tr><th>Invoice #</th><th>Date</th><th>Client</th><th>Weight</th><th>Total</th><th>Status</th><th></th></tr></thead>
-    <tbody id="invoices-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table>
+    <div class="table-scroll"><table><thead><tr><th>Invoice #</th><th>Date</th><th>Client</th><th>Weight</th><th>Total</th><th>Status</th><th></th></tr></thead>
+    <tbody id="invoices-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table></div>
   `;
   const [invoices, clients] = await Promise.all([
     sb('invoices?select=*&order=created_at.desc'),
@@ -1342,7 +1400,7 @@ function renderScheduleList(){
   const body = document.getElementById('schedule-body');
   if(!orders.length){ body.innerHTML = `<div class="empty-state">No order requests yet. Once clients start ordering through the portal, they'll show up here.</div>`; return; }
   body.innerHTML = `
-    <table><thead><tr><th>Requested For</th><th>Client</th><th>Sacks</th><th>Est. lb</th><th>Notes</th><th>Status</th><th></th></tr></thead>
+    <div class="table-scroll"><table><thead><tr><th>Requested For</th><th>Client</th><th>Sacks</th><th>Est. lb</th><th>Notes</th><th>Status</th><th></th></tr></thead>
     <tbody>${orders.map(o => {
       const client = clients.find(c => c.id === o.client_id);
       const estLb = o.requested_sacks * avgSackWeight;
@@ -1365,7 +1423,7 @@ function renderScheduleList(){
           <a href="${googleCalendarUrl(o, client ? client.business_name : 'Client')}" target="_blank" class="btn small secondary" style="text-decoration:none;display:inline-block;margin-left:4px;">+ Calendar</a>
         </td>
       </tr>`;
-    }).join('')}</tbody></table>
+    }).join('')}</tbody></table></div>
   `;
 }
 
@@ -1476,7 +1534,7 @@ function renderCalDay(){
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--rope);">
           <div>
             <div style="font-weight:600;">${client ? escapeHtml(client.business_name) : 'Unknown'}</div>
-            <div style="font-size:12px;color:var(--water-light);">${o.requested_sacks} sacks${o.notes ? ' — ' + escapeHtml(o.notes) : ''}</div>
+            <div style="font-size:12px;color:var(--water-light);">${o.requested_sacks} sacks${o.agreed_price_per_lb ? ` @ $${Number(o.agreed_price_per_lb).toFixed(2)}/lb` : ''}${o.notes ? ' — ' + escapeHtml(o.notes) : ''}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
             <span class="status-pill status-${o.status}">${o.status}</span>
