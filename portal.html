@@ -49,6 +49,16 @@
 
   table{width:100%;min-width:420px;border-collapse:collapse;}
   .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+
+  @media (max-width:700px){
+    .table-scroll{overflow-x:visible;}
+    table{min-width:0;width:100%;}
+    table, thead, tbody, tr, td{display:block;width:100%;}
+    thead{display:none;}
+    tbody tr{border:1px solid var(--rope);border-radius:4px;margin-bottom:10px;padding:10px 12px;background:#fff;}
+    td{border:none;padding:5px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;text-align:right;}
+    td::before{content:attr(data-label);font-weight:600;color:var(--water-light);font-size:10px;text-transform:uppercase;letter-spacing:0.04em;text-align:left;flex-shrink:0;}
+  }
   th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--water-light);padding:8px 6px;border-bottom:2px solid var(--rope-dark);}
   td{padding:9px 6px;border-bottom:1px solid var(--rope);font-size:13px;}
   .status-pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;}
@@ -213,9 +223,9 @@ async function loadOrders(){
   if(!orders.length){ tbody.innerHTML = `<tr><td colspan="3"><div class="empty-state">No requests yet.</div></td></tr>`; return; }
   tbody.innerHTML = orders.map(o => `
     <tr>
-      <td>${o.requested_date}</td>
-      <td>${o.requested_sacks}</td>
-      <td>
+      <td data-label="Needed">${o.requested_date}</td>
+      <td data-label="Sacks">${o.requested_sacks}</td>
+      <td data-label="Status">
         <span class="status-pill status-${o.status}">${o.status}</span>
         ${o.status === 'pending' ? '<div class="status-note">Awaiting confirmation — not guaranteed yet</div>' : ''}
       </td>
@@ -229,11 +239,11 @@ async function loadInvoices(){
   if(!invoices.length){ tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No invoices yet.</div></td></tr>`; return; }
   tbody.innerHTML = invoices.map(inv => `
     <tr>
-      <td>${inv.invoice_number}</td>
-      <td>${inv.created_at.slice(0,10)}</td>
-      <td>${Number(inv.total_weight_lbs).toLocaleString()} lb</td>
-      <td>$${Number(inv.total_amount).toFixed(2)}</td>
-      <td><span class="status-pill status-${inv.status}">${inv.status}</span></td>
+      <td data-label="Invoice #">${inv.invoice_number}</td>
+      <td data-label="Date">${inv.created_at.slice(0,10)}</td>
+      <td data-label="Weight">${Number(inv.total_weight_lbs).toLocaleString()} lb</td>
+      <td data-label="Total">$${Number(inv.total_amount).toFixed(2)}</td>
+      <td data-label="Status"><span class="status-pill status-${inv.status}">${inv.status}</span></td>
     </tr>
   `).join('');
 }

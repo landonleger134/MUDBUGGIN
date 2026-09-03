@@ -253,15 +253,37 @@
   .inv-table th,.inv-table td{border:1px solid var(--rope-dark);padding:8px;font-size:13px;text-align:left;}
   .inv-total{text-align:right;font-family:'Oswald',sans-serif;font-size:20px;margin-top:10px;}
 
+  #mobile-topbar{display:none;}
+  #nav-backdrop{display:none;}
+
   @media (max-width:800px){
-    #app.visible{flex-direction:column;}
-    #sidebar{width:100%;min-height:auto;flex-direction:row;overflow-x:auto;}
-    .brand{border-bottom:none;padding:16px 14px;}
-    .brand .name{font-size:14px;}
-    nav{display:flex;padding:0;}
-    nav a{border-left:none;border-bottom:3px solid transparent;white-space:nowrap;padding:12px 14px;}
-    nav a.active{border-left:none;border-bottom-color:var(--gold);}
-    #main{padding:18px 14px;}
+    #mobile-topbar{
+      display:flex;align-items:center;gap:12px;
+      position:fixed;top:0;left:0;right:0;height:56px;
+      background:var(--water);color:#fff;padding:0 16px;z-index:70;
+    }
+    #mobile-topbar .brandtype{font-size:15px;color:#fff;}
+    #hamburger-btn{
+      background:transparent;border:none;color:#fff;font-size:22px;
+      width:36px;height:36px;line-height:36px;padding:0;
+    }
+    #nav-backdrop.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:60;}
+
+    #app.visible{flex-direction:column;padding-top:56px;}
+    #sidebar{
+      position:fixed;top:0;left:0;bottom:0;width:250px;
+      flex-direction:column;overflow-x:hidden;overflow-y:auto;
+      transform:translateX(-100%);transition:transform 0.22s ease;
+      z-index:65;
+    }
+    #sidebar.nav-open{transform:translateX(0);}
+    .brand{border-bottom:1px solid rgba(255,255,255,0.12);padding:20px 18px;}
+    .brand .name{font-size:15px;}
+    nav{display:block;padding:12px 0;}
+    nav a{border-left:3px solid transparent;border-bottom:none;padding:12px 20px;white-space:normal;}
+    nav a.active{border-left-color:var(--gold);border-bottom:none;}
+
+    #main{padding:16px 14px;}
     .page-head h1{font-size:21px;}
     .page-head{flex-wrap:wrap;gap:10px;}
     .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px;}
@@ -269,12 +291,27 @@
     .stat-card .value{font-size:20px;}
     .row2{grid-template-columns:1fr;}
     .panel{padding:16px;}
-    #week-strip{overflow-x:auto;-webkit-overflow-scrolling:touch;grid-template-columns:repeat(7,70px) !important;}
-    #schedule-body > div[style*="grid-template-columns:repeat(7"]{
-      overflow-x:auto;
-      -webkit-overflow-scrolling:touch;
-      grid-template-columns:repeat(7,84px) !important;
+
+    #week-strip{grid-template-columns:repeat(2,1fr) !important;gap:8px;}
+
+    /* Tables become stacked cards instead of scrolling sideways */
+    .table-scroll{overflow-x:visible;}
+    table{min-width:0;width:100%;}
+    table, thead, tbody, tr, td{display:block;width:100%;}
+    thead{display:none;}
+    tbody tr{
+      border:1px solid var(--rope);border-radius:4px;
+      margin-bottom:10px;padding:10px 12px;background:#fff;
     }
+    tbody tr:hover td{background:transparent;}
+    td{border:none;padding:5px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;text-align:right;}
+    td:empty{display:none;}
+    td::before{
+      content:attr(data-label);font-weight:600;color:var(--water-light);
+      font-size:10px;text-transform:uppercase;letter-spacing:0.04em;
+      text-align:left;flex-shrink:0;
+    }
+    td[data-label=""]::before, td:not([data-label])::before{content:none;}
   }
 </style>
 </head>
@@ -295,6 +332,12 @@
 </div>
 
 <!-- ============== APP ============== -->
+<div id="mobile-topbar">
+  <button id="hamburger-btn" onclick="toggleMobileNav()" aria-label="Menu">☰</button>
+  <span class="brandtype">MUD BUGGIN LLC</span>
+</div>
+<div id="nav-backdrop" onclick="closeMobileNav()"></div>
+
 <div id="app">
   <div id="sidebar">
     <div class="brand">
@@ -406,6 +449,7 @@ function currentRoute(){
   return (location.hash || '#dashboard').slice(1);
 }
 function navigate(){
+  closeMobileNav();
   const route = currentRoute();
   const topLevel = route.split('/')[0];
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.route === topLevel));
@@ -417,6 +461,25 @@ function navigate(){
   fn();
 }
 window.addEventListener('hashchange', navigate);
+
+function toggleMobileNav(){
+  document.getElementById('sidebar').classList.toggle('nav-open');
+  document.getElementById('nav-backdrop').classList.toggle('open');
+}
+function closeMobileNav(){
+  document.getElementById('sidebar').classList.remove('nav-open');
+  document.getElementById('nav-backdrop').classList.remove('open');
+}
+
+let _resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    if(currentRoute().split('/')[0] === 'schedule' && window._scheduleViewMode === 'calendar' && window._scheduleOrders){
+      renderScheduleBody();
+    }
+  }, 200);
+});
 
 /* ================= BOOT ================= */
 function boot(){
@@ -598,12 +661,12 @@ async function renderClients(){
   if(!clients.length){ tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No clients yet. Add your first one above.</div></td></tr>`; return; }
   tbody.innerHTML = clients.map(c => `
     <tr>
-      <td><input type="checkbox" class="client-select-box" value="${c.id}" onchange="onClientSelectChange()"></td>
-      <td><a href="#clients/${c.id}" style="color:var(--red);font-weight:600;text-decoration:none;">${escapeHtml(c.business_name)}</a></td>
-      <td>${escapeHtml(c.contact_name || '—')}</td>
-      <td>${escapeHtml(c.phone || '—')}</td>
-      <td>$${Number(c.price_per_lb).toFixed(2)}</td>
-      <td>${c.lead_time_hours}h</td>
+      <td data-label="Select"><input type="checkbox" class="client-select-box" value="${c.id}" onchange="onClientSelectChange()"></td>
+      <td data-label="Business"><a href="#clients/${c.id}" style="color:var(--red);font-weight:600;text-decoration:none;">${escapeHtml(c.business_name)}</a></td>
+      <td data-label="Contact">${escapeHtml(c.contact_name || '—')}</td>
+      <td data-label="Phone">${escapeHtml(c.phone || '—')}</td>
+      <td data-label="$/lb">$${Number(c.price_per_lb).toFixed(2)}</td>
+      <td data-label="Lead Time">${c.lead_time_hours}h</td>
       <td>
         <button class="btn small secondary" onclick="showClientForm('${c.id}')">Edit</button>
         <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);margin-left:6px;" onclick="deleteClient('${c.id}', '${escapeHtml(c.business_name).replace(/'/g, "\\'")}')">Delete</button>
@@ -712,22 +775,22 @@ async function renderClientDetail(id){
     <h3 style="margin-top:26px;margin-bottom:10px;">Order Requests</h3>
     <div class="table-scroll"><table><thead><tr><th>Needed</th><th>Sacks</th><th>Status</th><th>Notes</th></tr></thead>
     <tbody>${orders.length ? orders.map(o => `
-      <tr><td>${o.requested_date}</td><td>${o.requested_sacks}</td><td><span class="status-pill status-${o.status}">${o.status}</span></td><td>${escapeHtml(o.notes || '—')}</td></tr>
+      <tr><td data-label="Needed">${o.requested_date}</td><td data-label="Sacks">${o.requested_sacks}</td><td data-label="Status"><span class="status-pill status-${o.status}">${o.status}</span></td><td data-label="Notes">${escapeHtml(o.notes || '—')}</td></tr>
     `).join('') : `<tr><td colspan="4"><div class="empty-state">No order requests from this client yet.</div></td></tr>`}</tbody></table></div>
 
     <h3 style="margin-top:26px;margin-bottom:10px;">Deliveries</h3>
     <div class="table-scroll"><table><thead><tr><th>Date</th><th>$/lb</th><th>Status</th></tr></thead>
     <tbody>${deliveries.length ? deliveries.map(d => `
-      <tr><td>${d.delivery_date}</td><td>$${Number(d.price_per_lb).toFixed(2)}</td><td><span class="status-pill status-${d.status}">${d.status}</span></td></tr>
+      <tr><td data-label="Date">${d.delivery_date}</td><td data-label="$/lb">$${Number(d.price_per_lb).toFixed(2)}</td><td data-label="Status"><span class="status-pill status-${d.status}">${d.status}</span></td></tr>
     `).join('') : `<tr><td colspan="3"><div class="empty-state">No deliveries logged for this client yet.</div></td></tr>`}</tbody></table></div>
 
     <h3 style="margin-top:26px;margin-bottom:10px;">Invoices</h3>
     <div class="table-scroll"><table><thead><tr><th>Invoice #</th><th>Date</th><th>Weight</th><th>Total</th><th>Status</th><th></th></tr></thead>
     <tbody>${invoices.length ? invoices.map(inv => `
       <tr>
-        <td>${inv.invoice_number}</td><td>${inv.created_at.slice(0,10)}</td>
-        <td>${Number(inv.total_weight_lbs).toLocaleString()} lb</td><td>$${Number(inv.total_amount).toFixed(2)}</td>
-        <td><span class="status-pill status-${inv.status}">${inv.status}</span></td>
+        <td data-label="Invoice #">${inv.invoice_number}</td><td data-label="Date">${inv.created_at.slice(0,10)}</td>
+        <td data-label="Weight">${Number(inv.total_weight_lbs).toLocaleString()} lb</td><td data-label="Total">$${Number(inv.total_amount).toFixed(2)}</td>
+        <td data-label="Status"><span class="status-pill status-${inv.status}">${inv.status}</span></td>
         <td><button class="btn small secondary" onclick="printInvoice('${inv.id}')">Print</button></td>
       </tr>
     `).join('') : `<tr><td colspan="6"><div class="empty-state">No invoices for this client yet.</div></td></tr>`}</tbody></table></div>
@@ -888,12 +951,12 @@ async function renderPickups(){
   if(!pickups.length){ tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No pickups logged yet.</div></td></tr>`; return; }
   tbody.innerHTML = pickups.map(p => `
     <tr>
-      <td>${p.pickup_date}</td>
-      <td>${escapeHtml(p.source || '—')}</td>
-      <td>${Number(p.total_weight_lbs).toLocaleString()}</td>
-      <td>$${Number(p.cost_total).toFixed(2)}</td>
-      <td>${escapeHtml(p.notes || '—')}</td>
-      <td>${p.photo_url ? `<button class="btn small secondary" onclick="viewPickupPhoto('${p.photo_url}')">View</button>` : '—'}</td>
+      <td data-label="Date">${p.pickup_date}</td>
+      <td data-label="Source">${escapeHtml(p.source || '—')}</td>
+      <td data-label="Weight (lb)">${Number(p.total_weight_lbs).toLocaleString()}</td>
+      <td data-label="Cost">$${Number(p.cost_total).toFixed(2)}</td>
+      <td data-label="Notes">${escapeHtml(p.notes || '—')}</td>
+      <td data-label="Ticket">${p.photo_url ? `<button class="btn small secondary" onclick="viewPickupPhoto('${p.photo_url}')">View</button>` : '—'}</td>
     </tr>
   `).join('');
 }
@@ -1042,13 +1105,13 @@ async function renderDeliveries(){
     const client = clients.find(c => c.id === d.client_id);
     const total = totalWeight * Number(d.price_per_lb);
     return `<tr>
-      <td>${d.delivery_date}</td>
-      <td>${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
-      <td>${dSacks.length}</td>
-      <td>${totalWeight.toLocaleString()}</td>
-      <td>$${Number(d.price_per_lb).toFixed(2)}</td>
-      <td>$${total.toFixed(2)}</td>
-      <td><span class="status-pill status-${d.status}">${d.status}</span></td>
+      <td data-label="Date">${d.delivery_date}</td>
+      <td data-label="Client">${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
+      <td data-label="Sacks">${dSacks.length}</td>
+      <td data-label="Weight (lb)">${totalWeight.toLocaleString()}</td>
+      <td data-label="$/lb">$${Number(d.price_per_lb).toFixed(2)}</td>
+      <td data-label="Total">$${total.toFixed(2)}</td>
+      <td data-label="Status"><span class="status-pill status-${d.status}">${d.status}</span></td>
     </tr>`;
   }).join('');
 }
@@ -1182,12 +1245,12 @@ async function renderInvoices(){
   tbody.innerHTML = invoices.map(inv => {
     const client = clients.find(c => c.id === inv.client_id);
     return `<tr>
-      <td>${inv.invoice_number}</td>
-      <td>${inv.created_at.slice(0,10)}</td>
-      <td>${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
-      <td>${Number(inv.total_weight_lbs).toLocaleString()} lb</td>
-      <td>$${Number(inv.total_amount).toFixed(2)}</td>
-      <td>
+      <td data-label="Invoice #">${inv.invoice_number}</td>
+      <td data-label="Date">${inv.created_at.slice(0,10)}</td>
+      <td data-label="Client">${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
+      <td data-label="Weight">${Number(inv.total_weight_lbs).toLocaleString()} lb</td>
+      <td data-label="Total">$${Number(inv.total_amount).toFixed(2)}</td>
+      <td data-label="Status">
         <select onchange="updateInvoiceStatus('${inv.id}', this.value)">
           <option value="unpaid" ${inv.status==='unpaid'?'selected':''}>Unpaid</option>
           <option value="paid" ${inv.status==='paid'?'selected':''}>Paid</option>
@@ -1417,12 +1480,12 @@ function renderScheduleList(){
       const client = clients.find(c => c.id === o.client_id);
       const estLb = o.requested_sacks * avgSackWeight;
       return `<tr>
-        <td>${o.requested_date}</td>
-        <td>${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
-        <td>${o.requested_sacks}</td>
-        <td>${estLb.toLocaleString(undefined,{maximumFractionDigits:0})}</td>
-        <td>${escapeHtml(o.notes || '—')}</td>
-        <td>
+        <td data-label="Requested For">${o.requested_date}</td>
+        <td data-label="Client">${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
+        <td data-label="Sacks">${o.requested_sacks}</td>
+        <td data-label="Est. lb">${estLb.toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+        <td data-label="Notes">${escapeHtml(o.notes || '—')}</td>
+        <td data-label="Status">
           <select onchange="updateOrderStatus('${o.id}', this.value)">
             <option value="pending" ${o.status==='pending'?'selected':''}>Pending</option>
             <option value="confirmed" ${o.status==='confirmed'?'selected':''}>Confirmed</option>
@@ -1458,6 +1521,8 @@ function renderScheduleCalendar(){
   else renderCalDay();
 }
 
+function isMobile(){ return window.innerWidth <= 800; }
+
 function renderCalMonth(){
   const anchor = window._calAnchor;
   const year = anchor.getFullYear(), month = anchor.getMonth();
@@ -1466,6 +1531,26 @@ function renderCalMonth(){
   const startOffset = firstOfMonth.getDay();
   const gridStart = new Date(year, month, 1 - startOffset);
   const todayStr = toDateStr(new Date());
+
+  if(isMobile()){
+    let rows = '';
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for(let day = 1; day <= daysInMonth; day++){
+      const d = new Date(year, month, day);
+      const dateStr = toDateStr(d);
+      const events = ordersOnDate(dateStr);
+      rows += `
+        <div onclick="goToScheduleDay('${dateStr}')" style="background:#fff;border:1px solid var(--rope);border-radius:4px;padding:10px 12px;margin-bottom:6px;cursor:pointer;${dateStr===todayStr?'border-color:var(--red);border-width:2px;':''}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${events.length?'6px':'0'};">
+            <span style="font-size:13px;font-weight:600;color:var(--water);">${DOW[d.getDay()]} ${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span>
+            ${!events.length ? '<span style="font-size:11px;color:var(--rope-dark);">—</span>' : ''}
+          </div>
+          ${events.map(renderEventChip).join('')}
+        </div>`;
+    }
+    document.getElementById('schedule-body').innerHTML = rows;
+    return;
+  }
 
   let cells = '';
   for(let i = 0; i < 42; i++){
@@ -1494,18 +1579,27 @@ function renderCalWeek(){
   document.getElementById('cal-label').textContent = `${start.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${end.toLocaleDateString(undefined,{month:'short',day:'numeric'})}`;
   const todayStr = toDateStr(new Date());
 
+  const mobile = isMobile();
   let cols = '';
   for(let i = 0; i < 7; i++){
     const d = new Date(start); d.setDate(start.getDate() + i);
     const dateStr = toDateStr(d);
     const events = ordersOnDate(dateStr);
-    cols += `
-      <div style="background:#fff;border:1px solid var(--rope);min-height:220px;padding:8px;${dateStr===todayStr?'outline:2px solid var(--red);outline-offset:-2px;':''}">
-        <div style="font-size:12px;color:var(--water);font-weight:600;margin-bottom:8px;">${DOW[d.getDay()]} ${d.getDate()}</div>
-        ${events.length ? events.map(renderEventChip).join('') : '<div style="font-size:11px;color:var(--rope-dark);">—</div>'}
-      </div>`;
+    if(mobile){
+      cols += `
+        <div onclick="goToScheduleDay('${dateStr}')" style="background:#fff;border:1px solid var(--rope);border-radius:4px;padding:10px 12px;margin-bottom:6px;cursor:pointer;${dateStr===todayStr?'border-color:var(--red);border-width:2px;':''}">
+          <div style="font-size:13px;color:var(--water);font-weight:600;margin-bottom:${events.length?'6px':'0'};">${DOW[d.getDay()]} ${d.getDate()}</div>
+          ${events.length ? events.map(renderEventChip).join('') : '<div style="font-size:11px;color:var(--rope-dark);">—</div>'}
+        </div>`;
+    } else {
+      cols += `
+        <div style="background:#fff;border:1px solid var(--rope);min-height:220px;padding:8px;${dateStr===todayStr?'outline:2px solid var(--red);outline-offset:-2px;':''}">
+          <div style="font-size:12px;color:var(--water);font-weight:600;margin-bottom:8px;">${DOW[d.getDay()]} ${d.getDate()}</div>
+          ${events.length ? events.map(renderEventChip).join('') : '<div style="font-size:11px;color:var(--rope-dark);">—</div>'}
+        </div>`;
+    }
   }
-  document.getElementById('schedule-body').innerHTML = `<div style="display:grid;grid-template-columns:repeat(7,1fr);">${cols}</div>`;
+  document.getElementById('schedule-body').innerHTML = mobile ? cols : `<div style="display:grid;grid-template-columns:repeat(7,1fr);">${cols}</div>`;
 }
 
 function renderCalDay(){
