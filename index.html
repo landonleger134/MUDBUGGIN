@@ -926,38 +926,80 @@ async function renderSchedule(){
   main.innerHTML = `
     <div class="page-head"><h1>Schedule</h1></div>
     <div class="page-head-bar"></div>
-    <table><thead><tr><th>Requested For</th><th>Client</th><th>Sacks</th><th>Notes</th><th>Status</th></tr></thead>
-    <tbody id="schedule-tbody"><tr><td colspan="5">Loading…</td></tr></tbody></table>
+    <div class="stat-grid" id="inventory-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px;"><div class="empty-state">Loading…</div></div>
+    <div style="font-size:12px;color:var(--water-light);margin:-14px 0 20px;">
+      Est. avg weight per sack:
+      <input id="avg-sack-input" type="number" step="0.5" style="width:70px;padding:3px 6px;border:1px solid var(--rope-dark);border-radius:3px;">
+      lb <button class="btn small secondary" onclick="saveAvgSackWeight()">Save</button>
+      — used only to estimate committed pounds against unsacked orders; doesn't affect invoices.
+    </div>
+    <table><thead><tr><th>Requested For</th><th>Client</th><th>Sacks</th><th>Est. lb</th><th>Notes</th><th>Status</th><th></th></tr></thead>
+    <tbody id="schedule-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table>
   `;
-  const [orders, clients] = await Promise.all([
+  const [orders, clients, pickups, sacks, settings] = await Promise.all([
     sb('order_requests?select=*&order=requested_date.asc'),
-    sb('clients?select=id,business_name')
+    sb('clients?select=id,business_name'),
+    sb('pickups?select=total_weight_lbs'),
+    sb('delivery_sacks?select=weight_lbs'),
+    sb('app_settings?select=*')
   ]);
+
+  const avgSackWeight = Number((settings.find(s => s.key === 'avg_sack_weight_lbs') || {}).value || 35);
+  document.getElementById('avg-sack-input').value = avgSackWeight;
+
+  const totalPickedUp = pickups.reduce((s,p)=>s+Number(p.total_weight_lbs),0);
+  const totalDelivered = sacks.reduce((s,x)=>s+Number(x.weight_lbs),0);
+  const onHand = totalPickedUp - totalDelivered;
+  const committedLbs = orders.filter(o => o.status === 'pending' || o.status === 'confirmed')
+    .reduce((s,o)=>s + (o.requested_sacks * avgSackWeight), 0);
+  const availableToPromise = onHand - committedLbs;
+
+  document.getElementById('inventory-grid').innerHTML = `
+    <div class="stat-card"><div class="label">On Hand</div><div class="value">${onHand.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div></div>
+    <div class="stat-card"><div class="label">Committed (Pending + Confirmed)</div><div class="value" style="color:var(--water);">${committedLbs.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div></div>
+    <div class="stat-card" style="${availableToPromise < 0 ? 'border-color:var(--unpaid);border-width:2px;' : ''}">
+      <div class="label">Available to Promise</div>
+      <div class="value" style="${availableToPromise < 0 ? 'color:var(--unpaid);' : ''}">${availableToPromise.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
+    </div>
+  `;
+
   const tbody = document.getElementById('schedule-tbody');
-  if(!orders.length){ tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No order requests yet. Once clients start ordering through the portal, they'll show up here.</div></td></tr>`; return; }
+  if(!orders.length){ tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No order requests yet. Once clients start ordering through the portal, they'll show up here.</div></td></tr>`; return; }
   tbody.innerHTML = orders.map(o => {
     const client = clients.find(c => c.id === o.client_id);
+    const estLb = o.requested_sacks * avgSackWeight;
     return `<tr>
       <td>${o.requested_date}</td>
       <td>${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
       <td>${o.requested_sacks}</td>
+      <td>${estLb.toLocaleString(undefined,{maximumFractionDigits:0})}</td>
       <td>${escapeHtml(o.notes || '—')}</td>
       <td>
         <select onchange="updateOrderStatus('${o.id}', this.value)">
           <option value="pending" ${o.status==='pending'?'selected':''}>Pending</option>
-          <option value="acknowledged" ${o.status==='acknowledged'?'selected':''}>Acknowledged</option>
+          <option value="confirmed" ${o.status==='confirmed'?'selected':''}>Confirmed</option>
           <option value="fulfilled" ${o.status==='fulfilled'?'selected':''}>Fulfilled</option>
           <option value="declined" ${o.status==='declined'?'selected':''}>Declined</option>
         </select>
       </td>
+      <td>${o.status === 'pending' ? `<button class="btn small" onclick="updateOrderStatus('${o.id}', 'confirmed')">Confirm</button>` : ''}</td>
     </tr>`;
   }).join('');
+}
+
+async function saveAvgSackWeight(){
+  const val = parseFloat(document.getElementById('avg-sack-input').value || 35);
+  try{
+    await sb('app_settings?key=eq.avg_sack_weight_lbs', { method:'PATCH', body: JSON.stringify({ value: String(val) }) });
+    toast('Saved.');
+    renderSchedule();
+  }catch(e){ toast('Save failed: ' + e.message, true); }
 }
 
 async function updateOrderStatus(id, status){
   try{
     await sb(`order_requests?id=eq.${id}`, { method:'PATCH', body: JSON.stringify({ status }) });
-    toast('Order updated.');
+    toast(status === 'confirmed' ? 'Order confirmed — client will see this reflected.' : 'Order updated.');
     renderSchedule();
     refreshScheduleBadge();
   }catch(e){ toast('Update failed: ' + e.message, true); }

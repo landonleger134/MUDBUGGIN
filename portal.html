@@ -47,9 +47,10 @@
   .status-unpaid{background:rgba(183,72,28,0.14);color:var(--unpaid);}
   .status-paid{background:rgba(46,125,79,0.14);color:var(--ok);}
   .status-pending{background:rgba(242,183,5,0.2);color:#8a6600;}
-  .status-acknowledged{background:rgba(51,72,76,0.12);color:var(--water);}
+  .status-confirmed{background:rgba(46,125,79,0.14);color:var(--ok);}
   .status-fulfilled{background:rgba(46,125,79,0.14);color:var(--ok);}
   .status-declined{background:rgba(183,72,28,0.14);color:var(--unpaid);}
+  .status-note{font-size:11px;color:var(--water-light);margin-top:2px;}
 
   .field{margin-bottom:12px;}
   .field label{display:block;font-size:12px;color:var(--water-light);margin-bottom:4px;}
@@ -194,7 +195,10 @@ async function loadOrders(){
     <tr>
       <td>${o.requested_date}</td>
       <td>${o.requested_sacks}</td>
-      <td><span class="status-pill status-${o.status}">${o.status}</span></td>
+      <td>
+        <span class="status-pill status-${o.status}">${o.status}</span>
+        ${o.status === 'pending' ? '<div class="status-note">Awaiting confirmation — not guaranteed yet</div>' : ''}
+      </td>
     </tr>
   `).join('');
 }
