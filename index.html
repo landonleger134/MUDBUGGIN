@@ -428,6 +428,7 @@
       <a href="#invoices" data-route="invoices">Invoices</a>
       <a href="#schedule" data-route="schedule">Schedule <span id="schedule-badge" style="display:none;background:var(--gold);color:var(--black);border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700;margin-left:4px;"></span></a>
       <a href="#todos" data-route="todos">To-Do</a>
+      <a href="#ar" data-route="ar">AR Report</a>
     </nav>
     <button id="a2hs-btn" onclick="showAddToHomeScreen()" style="margin:0 18px 8px;padding:9px;background:transparent;border:1px solid rgba(255,255,255,0.25);color:var(--cream);border-radius:3px;font-size:12px;">📱 Add to Home Screen</button>
     <button id="logout-btn" onclick="handleLogout()">Log Out</button>
@@ -647,7 +648,7 @@ function showAddToHomeScreen(){
 }
 
 /* ================= ROUTER ================= */
-const routes = { dashboard: renderDashboard, clients: renderClients, pickups: renderPickups, deliveries: renderDeliveries, invoices: renderInvoices, schedule: renderSchedule, todos: renderTodos };
+const routes = { dashboard: renderDashboard, clients: renderClients, pickups: renderPickups, deliveries: renderDeliveries, invoices: renderInvoices, schedule: renderSchedule, todos: renderTodos, ar: renderARReport };
 
 function currentRoute(){
   return (location.hash || '#dashboard').slice(1);
@@ -1093,6 +1094,7 @@ function showClientForm(id){
         <div class="field"><label>Price per lb ($)</label><input id="cf-price" type="number" step="0.01" value="${existing ? existing.price_per_lb : ''}"></div>
         <div class="field"><label>Order Lead Time (hours)</label><input id="cf-lead" type="number" value="${existing ? existing.lead_time_hours : 24}"></div>
       </div>
+      <div class="field"><label>Credit Limit ($) <span style="font-weight:400;color:var(--water-light);">— blocks new portal orders once unpaid balance hits this. Leave blank for no limit.</span></label><input id="cf-credit-limit" type="number" step="0.01" value="${existing && existing.credit_limit != null ? existing.credit_limit : ''}"></div>
       <button class="btn" onclick="saveClient(${existing ? `'${existing.id}'` : null})">Save Client</button>
       <button class="btn secondary" onclick="document.getElementById('client-form-slot').innerHTML=''">Cancel</button>
       ${existing ? `
@@ -1171,7 +1173,8 @@ async function saveClient(id){
     billing_address: document.getElementById('cf-billing-address').value.trim(),
     delivery_address: document.getElementById('cf-delivery-address').value.trim(),
     price_per_lb: parseFloat(document.getElementById('cf-price').value || 0),
-    lead_time_hours: parseInt(document.getElementById('cf-lead').value || 24, 10)
+    lead_time_hours: parseInt(document.getElementById('cf-lead').value || 24, 10),
+    credit_limit: document.getElementById('cf-credit-limit').value === '' ? null : parseFloat(document.getElementById('cf-credit-limit').value)
   };
   if(!payload.business_name){ toast('Business name is required.', true); return; }
   try{
@@ -2313,6 +2316,68 @@ async function deleteOrderConfirm(id){
   }catch(e){ toast('Could not delete: ' + e.message, true); }
 }
 
+
+/* ================= AR REPORT ================= */
+async function renderARReport(){
+  const main = document.getElementById('main');
+  main.innerHTML = `
+    <div class="page-head"><h1>AR Report</h1></div>
+    <div class="page-head-bar"></div>
+    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:24px;" id="ar-summary"><div class="empty-state">Loading…</div></div>
+    <div class="table-scroll"><table><thead><tr><th>Client</th><th>Unpaid Invoices</th><th>Total Owed</th><th>Oldest Unpaid</th><th>Days Outstanding</th><th>Credit Limit</th><th></th></tr></thead>
+    <tbody id="ar-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table></div>
+  `;
+  const [invoices, clients] = await Promise.all([
+    sb('invoices?select=*&status=eq.unpaid'),
+    sb('clients?select=id,business_name,credit_limit')
+  ]);
+
+  const todayMs = Date.now();
+  const byClient = {};
+  invoices.forEach(inv => {
+    if(!byClient[inv.client_id]) byClient[inv.client_id] = { count: 0, total: 0, oldest: inv.created_at };
+    const c = byClient[inv.client_id];
+    c.count++;
+    c.total += Number(inv.total_amount);
+    if(inv.created_at < c.oldest) c.oldest = inv.created_at;
+  });
+
+  const rows = Object.keys(byClient).map(clientId => {
+    const client = clients.find(c => c.id === clientId);
+    const data = byClient[clientId];
+    const daysOutstanding = Math.floor((todayMs - new Date(data.oldest).getTime()) / (1000*60*60*24));
+    return { clientId, client, ...data, daysOutstanding };
+  }).sort((a,b) => b.total - a.total);
+
+  const grandTotal = rows.reduce((s,r)=>s+r.total, 0);
+  const overdueCount = rows.filter(r => r.daysOutstanding > 30).length;
+  const clientsOwing = rows.length;
+
+  document.getElementById('ar-summary').innerHTML = `
+    <div class="stat-card"><div class="label">Total Outstanding</div><div class="value">$${grandTotal.toFixed(2)}</div></div>
+    <div class="stat-card"><div class="label">Clients With a Balance</div><div class="value">${clientsOwing}</div></div>
+    <div class="stat-card" style="${overdueCount ? 'border-color:var(--unpaid);border-width:2px;' : ''}">
+      <div class="label">Over 30 Days</div>
+      <div class="value" style="${overdueCount ? 'color:var(--unpaid);' : ''}">${overdueCount}</div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('ar-tbody');
+  if(!rows.length){ tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">Nothing outstanding — all invoices are paid.</div></td></tr>`; return; }
+  tbody.innerHTML = rows.map(r => {
+    const overdue = r.daysOutstanding > 30;
+    const nearLimit = r.client && r.client.credit_limit != null && r.total >= r.client.credit_limit;
+    return `<tr>
+      <td data-label="Client">${r.client ? escapeHtml(r.client.business_name) : 'Unknown'}</td>
+      <td data-label="Unpaid Invoices">${r.count}</td>
+      <td data-label="Total Owed" style="${overdue ? 'color:var(--unpaid);font-weight:600;' : ''}">$${r.total.toFixed(2)}</td>
+      <td data-label="Oldest Unpaid">${r.oldest.slice(0,10)}</td>
+      <td data-label="Days Outstanding">${r.daysOutstanding}${overdue ? ' ⚠️' : ''}</td>
+      <td data-label="Credit Limit">${r.client && r.client.credit_limit != null ? `$${Number(r.client.credit_limit).toFixed(2)}${nearLimit ? ' (at limit)' : ''}` : '—'}</td>
+      <td>${r.client ? `<a href="#clients/${r.client.id}" class="btn small secondary" style="text-decoration:none;display:inline-block;">View Client</a>` : ''}</td>
+    </tr>`;
+  }).join('');
+}
 
 /* ================= UTIL ================= */
 function escapeHtml(str){

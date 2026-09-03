@@ -143,6 +143,7 @@
     <h2>Current Rate</h2>
     <div class="rate-line"><span class="label">Price per lb</span><span class="value" id="client-price">—</span></div>
     <div class="rate-line"><span class="label">Orders must be placed at least</span><span class="value" id="client-lead">—</span></div>
+    <div class="rate-line" id="client-balance-row" style="display:none;"><span class="label">Account Balance</span><span class="value" id="client-balance">—</span></div>
   </div>
 
   <div class="card">
@@ -322,6 +323,12 @@ async function boot(){
     currentClient = clients[0];
     document.getElementById('client-price').textContent = `$${Number(currentClient.price_per_lb).toFixed(2)}/lb`;
     document.getElementById('client-lead').textContent = `${currentClient.lead_time_hours} hours ahead`;
+    if(currentClient.credit_limit != null){
+      const unpaid = await sb(`invoices?client_id=eq.${currentClient.id}&status=eq.unpaid&select=total_amount`);
+      const owed = unpaid.reduce((s,i) => s + Number(i.total_amount), 0);
+      document.getElementById('client-balance-row').style.display = 'flex';
+      document.getElementById('client-balance').textContent = `$${owed.toFixed(2)} of $${Number(currentClient.credit_limit).toFixed(2)} limit`;
+    }
     loadOrders();
     loadInvoices();
   }catch(e){ toast('Could not load your account: ' + e.message, true); }
@@ -367,6 +374,19 @@ async function checkAvailability(){
   const dateVal = document.getElementById('order-date').value;
   const sacks = parseInt(document.getElementById('order-sacks').value || 0, 10);
   if(!dateVal || !currentClient){ warnBox.style.display = 'none'; btn.disabled = false; return; }
+
+  if(currentClient.credit_limit != null){
+    try{
+      const unpaid = await sb(`invoices?client_id=eq.${currentClient.id}&status=eq.unpaid&select=total_amount`);
+      const owed = unpaid.reduce((s,i) => s + Number(i.total_amount), 0);
+      if(owed >= currentClient.credit_limit){
+        warnBox.textContent = `Your outstanding balance ($${owed.toFixed(2)}) has reached your account limit. Please settle up or contact Mud Buggin LLC directly to place this order.`;
+        warnBox.style.display = 'block';
+        btn.disabled = true;
+        return;
+      }
+    }catch(e){ /* fail open — don't block ordering over a failed check */ }
+  }
 
   const requested = new Date(dateVal + 'T00:00:00');
   const minAllowed = new Date(Date.now() + currentClient.lead_time_hours * 60 * 60 * 1000);

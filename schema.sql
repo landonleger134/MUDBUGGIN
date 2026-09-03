@@ -13,6 +13,7 @@ create table clients (
   address text,
   price_per_lb numeric(10,2) not null default 0,   -- current/live rate, shown to client at order time
   lead_time_hours integer not null default 24,      -- how far in advance an order must be placed
+  credit_limit numeric(10,2),                        -- blocks new portal orders once unpaid balance hits this; null = no limit
   notes text,
   active boolean not null default true,
   created_at timestamptz not null default now()
