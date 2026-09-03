@@ -26,8 +26,15 @@ create table pickups (
   total_weight_lbs numeric(10,2) not null default 0,
   cost_total numeric(10,2) not null default 0,
   notes text,
+  photo_url text,        -- path within the 'pickup-photos' storage bucket, if a ticket photo was attached
+  ocr_raw_text text,      -- raw text the ticket-reading Edge Function returned, kept for reference
   created_at timestamptz not null default now()
 );
+
+-- Storage bucket for pickup ticket photos (private; only authenticated users can read/write)
+insert into storage.buckets (id, name, public) values ('pickup-photos', 'pickup-photos', false) on conflict (id) do nothing;
+create policy "authenticated read pickup photos" on storage.objects for select using (bucket_id = 'pickup-photos' and auth.role() = 'authenticated');
+create policy "authenticated upload pickup photos" on storage.objects for insert with check (bucket_id = 'pickup-photos' and auth.role() = 'authenticated');
 
 -- Deliveries: one per drop-off to a client
 create table deliveries (
