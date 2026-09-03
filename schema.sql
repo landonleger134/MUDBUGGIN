@@ -139,6 +139,7 @@ create table expected_pickups (
   expected_date date not null,
   source text,
   expected_weight_lbs numeric(10,2) not null,
+  expected_sacks integer,
   notes text,
   created_at timestamptz not null default now()
 );

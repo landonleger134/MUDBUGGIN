@@ -1333,7 +1333,7 @@ function renderExpectedList(){
   if(!list.length){ el.innerHTML = `<div style="font-size:13px;color:var(--water-light);">Nothing noted yet.</div>`; return; }
   el.innerHTML = list.map(e => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--rope);font-size:13px;">
-      <span><strong>${e.expected_date}</strong> — ${e.expected_weight_lbs.toLocaleString()} lb${e.source ? ' from ' + escapeHtml(e.source) : ''}${e.notes ? ' — ' + escapeHtml(e.notes) : ''}</span>
+      <span><strong>${e.expected_date}</strong> — ${e.expected_sacks ? `${e.expected_sacks} sacks (~${Math.round(e.expected_weight_lbs).toLocaleString()} lb)` : `${e.expected_weight_lbs.toLocaleString()} lb`}${e.source ? ' from ' + escapeHtml(e.source) : ''}${e.notes ? ' — ' + escapeHtml(e.notes) : ''}</span>
       <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);" onclick="deleteExpectedPickup('${e.id}')">Delete</button>
     </div>
   `).join('');
@@ -1345,25 +1345,37 @@ function showExpectedPickupForm(){
   slot.innerHTML = `
     <div class="row2">
       <div class="field"><label>Expected Date</label><input id="ep-date" type="date" value="${today}"></div>
-      <div class="field"><label>Expected Weight (lb)</label><input id="ep-weight" type="number" step="1"></div>
+      <div class="field"><label>Source / Dock (optional)</label><input id="ep-source"></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Source / Dock (optional)</label><input id="ep-source"></div>
-      <div class="field"><label>Notes (optional)</label><input id="ep-notes"></div>
+      <div class="field"><label>Expected Sacks</label><input id="ep-sacks" type="number" step="1" oninput="onExpectedInputChange('sacks')"></div>
+      <div class="field"><label>Expected Weight (lb)</label><input id="ep-weight" type="number" step="1" oninput="onExpectedInputChange('weight')"></div>
     </div>
+    <div style="font-size:11px;color:var(--water-light);margin:-8px 0 12px;">Fill in either one — sacks convert using the avg sack weight above, or enter lb directly if that's what they told you.</div>
+    <div class="field"><label>Notes (optional)</label><input id="ep-notes"></div>
     <button class="btn small" onclick="saveExpectedPickup()">Save</button>
     <button class="btn small secondary" onclick="document.getElementById('expected-form-slot').innerHTML=''">Cancel</button>
   `;
 }
 
+function onExpectedInputChange(source){
+  const sacksInput = document.getElementById('ep-sacks');
+  const weightInput = document.getElementById('ep-weight');
+  if(source === 'sacks' && sacksInput.value){
+    weightInput.value = Math.round(parseFloat(sacksInput.value) * (window._scheduleAvgSack || 35));
+  }
+}
+
 async function saveExpectedPickup(){
   const date = document.getElementById('ep-date').value;
+  const sacks = parseInt(document.getElementById('ep-sacks').value || 0, 10);
   const weight = parseFloat(document.getElementById('ep-weight').value || 0);
   const source = document.getElementById('ep-source').value.trim();
   const notes = document.getElementById('ep-notes').value.trim();
-  if(!date || !weight){ toast('Enter a date and expected weight.', true); return; }
+  if(!date || (!weight && !sacks)){ toast('Enter a date and either sacks or a weight.', true); return; }
+  const finalWeight = weight || (sacks * (window._scheduleAvgSack || 35));
   try{
-    await sb('expected_pickups', { method:'POST', body: JSON.stringify({ expected_date: date, expected_weight_lbs: weight, source, notes }) });
+    await sb('expected_pickups', { method:'POST', body: JSON.stringify({ expected_date: date, expected_weight_lbs: finalWeight, expected_sacks: sacks || null, source, notes }) });
     document.getElementById('expected-form-slot').innerHTML = '';
     toast('Noted.');
     renderSchedule();
@@ -1414,7 +1426,7 @@ function renderScheduleList(){
           <select onchange="updateOrderStatus('${o.id}', this.value)">
             <option value="pending" ${o.status==='pending'?'selected':''}>Pending</option>
             <option value="confirmed" ${o.status==='confirmed'?'selected':''}>Confirmed</option>
-            <option value="fulfilled" ${o.status==='fulfilled'?'selected':''}>Fulfilled</option>
+            <option value="fulfilled" ${o.status==='fulfilled'?'selected':''}>Fulfilled${o.status!=='fulfilled' ? ' (weigh & invoice)' : ''}</option>
             <option value="declined" ${o.status==='declined'?'selected':''}>Declined</option>
           </select>
         </td>
@@ -1592,6 +1604,10 @@ async function saveAvgSackWeight(){
 }
 
 async function updateOrderStatus(id, status){
+  if(status === 'fulfilled'){
+    deliverOrder(id);
+    return;
+  }
   try{
     await sb(`order_requests?id=eq.${id}`, { method:'PATCH', body: JSON.stringify({ status }) });
     toast(status === 'confirmed' ? 'Order confirmed — client will see this reflected.' : 'Order updated.');
