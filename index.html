@@ -436,19 +436,21 @@ async function refreshScheduleBadge(){
 async function renderDashboard(){
   const main = document.getElementById('main');
   main.innerHTML = `<div class="page-head"><h1>Dashboard</h1></div><div class="page-head-bar"></div>
-    <div class="stat-grid" id="stat-grid"><div class="empty-state">Loading…</div></div>`;
+    <div class="stat-grid" id="stat-grid"><div class="empty-state">Loading…</div></div>
+    <h3 style="margin-top:8px;margin-bottom:10px;">Sacks Needed — Next 7 Days</h3>
+    <div id="week-strip" style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:8px;"><div class="empty-state">Loading…</div></div>`;
   try{
-    const [deliveries, invoices, pickups, pendingOrders] = await Promise.all([
+    const [deliveries, invoices, pickups, allOrders] = await Promise.all([
       sb('deliveries?select=id,delivery_date&order=delivery_date.desc'),
       sb('invoices?select=id,total_amount,status'),
       sb('pickups?select=id,pickup_date&order=pickup_date.desc&limit=30'),
-      sb('order_requests?select=id&status=eq.pending')
+      sb('order_requests?select=id,requested_date,requested_sacks,status')
     ]);
     const unpaidTotal = invoices.filter(i => i.status === 'unpaid').reduce((s,i)=>s+Number(i.total_amount),0);
     const thisMonth = new Date().toISOString().slice(0,7);
     const deliveriesThisMonth = deliveries.filter(d => d.delivery_date.startsWith(thisMonth)).length;
     const pickupsThisMonth = pickups.filter(p => p.pickup_date.startsWith(thisMonth)).length;
-    const pendingCount = pendingOrders.length;
+    const pendingCount = allOrders.filter(o => o.status === 'pending').length;
     document.getElementById('stat-grid').innerHTML = `
       <div class="stat-card" style="${pendingCount ? 'border-color:var(--gold);border-width:2px;cursor:pointer;' : ''}" ${pendingCount ? `onclick="location.hash='#schedule'"` : ''}>
         <div class="label">${pendingCount ? 'New Order Requests' : 'Order Requests'}</div>
@@ -458,10 +460,40 @@ async function renderDashboard(){
       <div class="stat-card"><div class="label">Deliveries This Month</div><div class="value">${deliveriesThisMonth}</div></div>
       <div class="stat-card"><div class="label">Pickups This Month</div><div class="value">${pickupsThisMonth}</div></div>
     `;
+
+    const relevant = allOrders.filter(o => o.status === 'pending' || o.status === 'confirmed');
+    let strip = '';
+    for(let i = 0; i < 7; i++){
+      const d = new Date(); d.setDate(d.getDate() + i);
+      const dateStr = d.toISOString().slice(0,10);
+      const dayOrders = relevant.filter(o => o.requested_date === dateStr);
+      const sacks = dayOrders.reduce((s,o)=>s+o.requested_sacks, 0);
+      const hasConfirmed = dayOrders.some(o => o.status === 'confirmed');
+      const hasPendingOnly = sacks > 0 && !hasConfirmed;
+      const bg = sacks === 0 ? '#fff' : hasPendingOnly ? 'rgba(242,183,5,0.12)' : 'rgba(46,125,79,0.1)';
+      const border = sacks === 0 ? 'var(--rope)' : hasPendingOnly ? 'var(--gold)' : 'var(--ok)';
+      strip += `
+        <div onclick="goToScheduleDay('${dateStr}')" style="background:${bg};border:1px solid ${border};border-radius:4px;padding:10px 6px;text-align:center;cursor:pointer;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--water-light);">${i === 0 ? 'Today' : d.toLocaleDateString(undefined,{weekday:'short'})}</div>
+          <div style="font-size:11px;color:var(--water-light);margin-bottom:4px;">${d.toLocaleDateString(undefined,{month:'numeric',day:'numeric'})}</div>
+          <div style="font-family:'Oswald',sans-serif;font-size:20px;color:${sacks === 0 ? 'var(--rope-dark)' : 'var(--red)'};">${sacks}</div>
+          <div style="font-size:10px;color:var(--water-light);">sacks</div>
+        </div>`;
+    }
+    document.getElementById('week-strip').innerHTML = strip;
   }catch(e){
     document.getElementById('stat-grid').innerHTML = `<div class="empty-state">Couldn't load stats. ${e.message}</div>`;
   }
 }
+
+function goToScheduleDay(dateStr){
+  window._calAnchor = new Date(dateStr + 'T00:00:00');
+  window._scheduleViewMode = 'calendar';
+  window._calGranularity = 'day';
+  location.hash = '#schedule';
+}
+
+
 
 /* ================= CLIENTS ================= */
 async function renderClients(){
