@@ -901,6 +901,11 @@ async function renderDeliveries(){
   ]);
   window._clientsCache = clients;
   const tbody = document.getElementById('deliveries-tbody');
+  if(window._pendingOrderDelivery){
+    const order = window._pendingOrderDelivery;
+    window._pendingOrderDelivery = null;
+    showDeliveryForm(order);
+  }
   if(!deliveries.length){ tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No deliveries yet.</div></td></tr>`; return; }
   tbody.innerHTML = deliveries.map(d => {
     const dSacks = sacks.filter(s => s.delivery_id === d.id);
@@ -919,24 +924,27 @@ async function renderDeliveries(){
   }).join('');
 }
 
-function showDeliveryForm(){
+function showDeliveryForm(fromOrder){
   const clients = window._clientsCache || [];
   if(!clients.length){ toast('Add a client first.', true); return; }
   const slot = document.getElementById('delivery-form-slot');
   const today = new Date().toISOString().slice(0,10);
+  const client = fromOrder ? clients.find(c => c.id === fromOrder.client_id) : null;
+  window._deliveringOrderId = fromOrder ? fromOrder.id : null;
   slot.innerHTML = `
     <div class="panel">
-      <h3>New Delivery</h3>
+      <h3>${fromOrder ? 'Deliver Order' : 'New Delivery'}</h3>
+      ${fromOrder ? `<p style="font-size:13px;color:var(--water-light);margin-bottom:10px;">From ${client ? escapeHtml(client.business_name) : 'this client'}'s request for ${fromOrder.requested_sacks} sacks on ${fromOrder.requested_date}. Just weigh each sack below.</p>` : ''}
       <div class="row2">
         <div class="field"><label>Client</label>
-          <select id="df-client" onchange="onDeliveryClientChange()">
+          <select id="df-client" onchange="onDeliveryClientChange()" ${fromOrder ? 'disabled' : ''}>
             <option value="">Select client…</option>
-            ${clients.map(c => `<option value="${c.id}" data-price="${c.price_per_lb}">${escapeHtml(c.business_name)}</option>`).join('')}
+            ${clients.map(c => `<option value="${c.id}" data-price="${c.price_per_lb}" ${client && c.id === client.id ? 'selected' : ''}>${escapeHtml(c.business_name)}</option>`).join('')}
           </select>
         </div>
         <div class="field"><label>Date</label><input id="df-date" type="date" value="${today}"></div>
       </div>
-      <div class="field"><label>Price per lb for this delivery ($)</label><input id="df-price" type="number" step="0.01"></div>
+      <div class="field"><label>Price per lb for this delivery ($)</label><input id="df-price" type="number" step="0.01" value="${client ? client.price_per_lb : ''}"></div>
       <div class="field">
         <label>Sacks</label>
         <div id="sack-rows"></div>
@@ -944,10 +952,12 @@ function showDeliveryForm(){
       </div>
       <div class="total-line"><span>Total</span><span class="amt" id="df-total">$0.00</span></div>
       <button class="btn" onclick="saveDelivery()">Save & Generate Invoice</button>
-      <button class="btn secondary" onclick="document.getElementById('delivery-form-slot').innerHTML=''">Cancel</button>
+      <button class="btn secondary" onclick="document.getElementById('delivery-form-slot').innerHTML=''; window._deliveringOrderId=null;">Cancel</button>
     </div>
   `;
-  addSackRow(); addSackRow();
+  const sackCount = fromOrder ? fromOrder.requested_sacks : 2;
+  for(let i = 0; i < sackCount; i++) addSackRow();
+  if(client) document.getElementById('sack-rows').closest('.panel').querySelector('#sack-rows input')?.focus();
 }
 
 function onDeliveryClientChange(){
@@ -989,7 +999,7 @@ async function saveDelivery(){
     const [delivery] = await sb('deliveries', {
       method:'POST',
       headers: { 'Prefer': 'return=representation' },
-      body: JSON.stringify({ client_id: clientId, delivery_date: date, price_per_lb: price, status: 'delivered' })
+      body: JSON.stringify({ client_id: clientId, delivery_date: date, price_per_lb: price, status: 'delivered', order_request_id: window._deliveringOrderId || null })
     });
     const sackRows = weights.map((w,i) => ({ delivery_id: delivery.id, sack_number: i+1, weight_lbs: w }));
     await sb('delivery_sacks', { method:'POST', body: JSON.stringify(sackRows) });
@@ -1011,9 +1021,15 @@ async function saveDelivery(){
     });
     await sb(`deliveries?id=eq.${delivery.id}`, { method:'PATCH', body: JSON.stringify({ status: 'invoiced' }) });
 
+    if(window._deliveringOrderId){
+      await sb(`order_requests?id=eq.${window._deliveringOrderId}`, { method:'PATCH', body: JSON.stringify({ status: 'fulfilled' }) });
+      window._deliveringOrderId = null;
+    }
+
     toast('Delivery saved and invoice generated.');
     document.getElementById('delivery-form-slot').innerHTML = '';
     renderDeliveries();
+    refreshScheduleBadge();
   }catch(e){ toast('Save failed: ' + e.message, true); }
 }
 
@@ -1205,6 +1221,7 @@ function renderScheduleList(){
           </select>
         </td>
         <td>${o.status === 'pending' ? `<button class="btn small" onclick="updateOrderStatus('${o.id}', 'confirmed')">Confirm</button>` : ''}
+          ${o.status === 'confirmed' ? `<button class="btn small" onclick="deliverOrder('${o.id}')">Deliver</button>` : ''}
           <a href="${googleCalendarUrl(o, client ? client.business_name : 'Client')}" target="_blank" class="btn small secondary" style="text-decoration:none;display:inline-block;margin-left:4px;">+ Calendar</a>
         </td>
       </tr>`;
@@ -1295,7 +1312,11 @@ function renderCalDay(){
             <div style="font-weight:600;">${client ? escapeHtml(client.business_name) : 'Unknown'}</div>
             <div style="font-size:12px;color:var(--water-light);">${o.requested_sacks} sacks${o.notes ? ' — ' + escapeHtml(o.notes) : ''}</div>
           </div>
-          <span class="status-pill status-${o.status}">${o.status}</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="status-pill status-${o.status}">${o.status}</span>
+            ${o.status === 'pending' ? `<button class="btn small" onclick="updateOrderStatus('${o.id}', 'confirmed')">Confirm</button>` : ''}
+            ${o.status === 'confirmed' ? `<button class="btn small" onclick="deliverOrder('${o.id}')">Deliver</button>` : ''}
+          </div>
         </div>`;
       }).join('') : `<div class="empty-state">Nothing scheduled for this day.</div>`}
     </div>
@@ -1328,6 +1349,13 @@ async function updateOrderStatus(id, status){
     renderSchedule();
     refreshScheduleBadge();
   }catch(e){ toast('Update failed: ' + e.message, true); }
+}
+
+function deliverOrder(orderId){
+  const order = window._scheduleOrders.find(o => o.id === orderId);
+  if(!order){ toast('Could not find that order.', true); return; }
+  window._pendingOrderDelivery = order;
+  location.hash = '#deliveries';
 }
 
 

@@ -127,6 +127,9 @@ create policy "client reads own invoices" on invoices for select using (client_i
 create policy "client reads own orders" on order_requests for select using (client_id in (select id from clients where auth_user_id = auth.uid()));
 create policy "client inserts own order" on order_requests for insert with check (client_id in (select id from clients where auth_user_id = auth.uid()));
 
+-- Links a delivery back to the order request it fulfilled, so the "Deliver" pipeline can mark it complete
+alter table deliveries add column if not exists order_request_id uuid references order_requests(id);
+
 -- Lock the app down: staff (you) get full access, clients only see their own data via the policies above.
 alter table clients enable row level security;
 alter table pickups enable row level security;
