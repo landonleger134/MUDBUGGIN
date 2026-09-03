@@ -442,10 +442,27 @@ async function renderClients(){
       <td>${escapeHtml(c.phone || '—')}</td>
       <td>$${Number(c.price_per_lb).toFixed(2)}</td>
       <td>${c.lead_time_hours}h</td>
-      <td><button class="btn small secondary" onclick="showClientForm('${c.id}')">Edit</button></td>
+      <td>
+        <button class="btn small secondary" onclick="showClientForm('${c.id}')">Edit</button>
+        <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);margin-left:6px;" onclick="deleteClient('${c.id}', '${escapeHtml(c.business_name).replace(/'/g, "\\'")}')">Delete</button>
+      </td>
     </tr>
   `).join('');
   window._clientsCache = clients;
+}
+
+async function deleteClient(id, name){
+  const hasDeliveries = await sb(`deliveries?client_id=eq.${id}&select=id&limit=1`);
+  if(hasDeliveries && hasDeliveries.length){
+    toast(`Can't delete ${name} — they have delivery/invoice history. Consider editing their info instead, or removing their deliveries first if this was a mistake.`, true);
+    return;
+  }
+  if(!confirm(`Delete ${name}? This can't be undone.`)) return;
+  try{
+    await sb(`clients?id=eq.${id}`, { method:'DELETE' });
+    toast('Client deleted.');
+    renderClients();
+  }catch(e){ toast('Delete failed: ' + e.message, true); }
 }
 
 function showClientForm(id){
