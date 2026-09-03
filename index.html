@@ -1076,8 +1076,24 @@ async function renderSchedule(){
       lb <button class="btn small secondary" onclick="saveAvgSackWeight()">Save</button>
       — used only to estimate committed pounds against unsacked orders; doesn't affect invoices.
     </div>
-    <table><thead><tr><th>Requested For</th><th>Client</th><th>Sacks</th><th>Est. lb</th><th>Notes</th><th>Status</th><th></th></tr></thead>
-    <tbody id="schedule-tbody"><tr><td colspan="7">Loading…</td></tr></tbody></table>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+      <div>
+        <button class="btn small ${window._scheduleViewMode !== 'calendar' ? '' : 'secondary'}" onclick="setScheduleView('list')">List</button>
+        <button class="btn small ${window._scheduleViewMode === 'calendar' ? '' : 'secondary'}" onclick="setScheduleView('calendar')">Calendar</button>
+      </div>
+      <div id="cal-controls" style="display:${window._scheduleViewMode === 'calendar' ? 'flex' : 'none'};align-items:center;gap:6px;">
+        <button class="btn small secondary" onclick="navCal(-1)">‹</button>
+        <button class="btn small secondary" onclick="goToday()">Today</button>
+        <button class="btn small secondary" onclick="navCal(1)">›</button>
+        <span id="cal-label" style="font-family:'Oswald',sans-serif;font-size:15px;margin:0 8px;"></span>
+        <button class="btn small ${window._calGranularity==='month'?'':'secondary'}" onclick="setCalGranularity('month')">Month</button>
+        <button class="btn small ${window._calGranularity==='week'?'':'secondary'}" onclick="setCalGranularity('week')">Week</button>
+        <button class="btn small ${window._calGranularity==='day'?'':'secondary'}" onclick="setCalGranularity('day')">Day</button>
+      </div>
+    </div>
+
+    <div id="schedule-body"></div>
   `;
   const [orders, clients, pickups, sacks, settings] = await Promise.all([
     sb('order_requests?select=*&order=requested_date.asc'),
@@ -1106,30 +1122,152 @@ async function renderSchedule(){
     </div>
   `;
 
-  const tbody = document.getElementById('schedule-tbody');
-  if(!orders.length){ tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No order requests yet. Once clients start ordering through the portal, they'll show up here.</div></td></tr>`; return; }
-  tbody.innerHTML = orders.map(o => {
-    const client = clients.find(c => c.id === o.client_id);
-    const estLb = o.requested_sacks * avgSackWeight;
-    return `<tr>
-      <td>${o.requested_date}</td>
-      <td>${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
-      <td>${o.requested_sacks}</td>
-      <td>${estLb.toLocaleString(undefined,{maximumFractionDigits:0})}</td>
-      <td>${escapeHtml(o.notes || '—')}</td>
-      <td>
-        <select onchange="updateOrderStatus('${o.id}', this.value)">
-          <option value="pending" ${o.status==='pending'?'selected':''}>Pending</option>
-          <option value="confirmed" ${o.status==='confirmed'?'selected':''}>Confirmed</option>
-          <option value="fulfilled" ${o.status==='fulfilled'?'selected':''}>Fulfilled</option>
-          <option value="declined" ${o.status==='declined'?'selected':''}>Declined</option>
-        </select>
-      </td>
-      <td>${o.status === 'pending' ? `<button class="btn small" onclick="updateOrderStatus('${o.id}', 'confirmed')">Confirm</button>` : ''}
-        <a href="${googleCalendarUrl(o, client ? client.business_name : 'Client')}" target="_blank" class="btn small secondary" style="text-decoration:none;display:inline-block;margin-left:4px;">+ Calendar</a>
-      </td>
-    </tr>`;
-  }).join('');
+  window._scheduleOrders = orders;
+  window._scheduleClients = clients;
+  window._scheduleAvgSack = avgSackWeight;
+  if(!window._calAnchor) window._calAnchor = new Date();
+  if(!window._scheduleViewMode) window._scheduleViewMode = 'list';
+  if(!window._calGranularity) window._calGranularity = 'month';
+  renderScheduleBody();
+}
+
+function setScheduleView(mode){ window._scheduleViewMode = mode; renderSchedule(); }
+function setCalGranularity(g){ window._calGranularity = g; renderScheduleBody(); }
+function navCal(delta){
+  const d = window._calAnchor;
+  if(window._calGranularity === 'month') d.setMonth(d.getMonth() + delta);
+  else if(window._calGranularity === 'week') d.setDate(d.getDate() + delta*7);
+  else d.setDate(d.getDate() + delta);
+  renderScheduleBody();
+}
+function goToday(){ window._calAnchor = new Date(); renderScheduleBody(); }
+
+function renderScheduleBody(){
+  const controls = document.getElementById('cal-controls');
+  if(controls) controls.style.display = window._scheduleViewMode === 'calendar' ? 'flex' : 'none';
+  if(window._scheduleViewMode === 'calendar') renderScheduleCalendar();
+  else renderScheduleList();
+}
+
+function renderScheduleList(){
+  const orders = window._scheduleOrders, clients = window._scheduleClients, avgSackWeight = window._scheduleAvgSack;
+  const body = document.getElementById('schedule-body');
+  if(!orders.length){ body.innerHTML = `<div class="empty-state">No order requests yet. Once clients start ordering through the portal, they'll show up here.</div>`; return; }
+  body.innerHTML = `
+    <table><thead><tr><th>Requested For</th><th>Client</th><th>Sacks</th><th>Est. lb</th><th>Notes</th><th>Status</th><th></th></tr></thead>
+    <tbody>${orders.map(o => {
+      const client = clients.find(c => c.id === o.client_id);
+      const estLb = o.requested_sacks * avgSackWeight;
+      return `<tr>
+        <td>${o.requested_date}</td>
+        <td>${client ? escapeHtml(client.business_name) : 'Unknown'}</td>
+        <td>${o.requested_sacks}</td>
+        <td>${estLb.toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+        <td>${escapeHtml(o.notes || '—')}</td>
+        <td>
+          <select onchange="updateOrderStatus('${o.id}', this.value)">
+            <option value="pending" ${o.status==='pending'?'selected':''}>Pending</option>
+            <option value="confirmed" ${o.status==='confirmed'?'selected':''}>Confirmed</option>
+            <option value="fulfilled" ${o.status==='fulfilled'?'selected':''}>Fulfilled</option>
+            <option value="declined" ${o.status==='declined'?'selected':''}>Declined</option>
+          </select>
+        </td>
+        <td>${o.status === 'pending' ? `<button class="btn small" onclick="updateOrderStatus('${o.id}', 'confirmed')">Confirm</button>` : ''}
+          <a href="${googleCalendarUrl(o, client ? client.business_name : 'Client')}" target="_blank" class="btn small secondary" style="text-decoration:none;display:inline-block;margin-left:4px;">+ Calendar</a>
+        </td>
+      </tr>`;
+    }).join('')}</tbody></table>
+  `;
+}
+
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function toDateStr(d){ return d.toISOString().slice(0,10); }
+function ordersOnDate(dateStr){ return window._scheduleOrders.filter(o => o.requested_date === dateStr); }
+function eventChipColor(status){
+  return status === 'confirmed' ? 'var(--ok)' : status === 'declined' ? 'var(--unpaid)' : status === 'fulfilled' ? 'var(--water)' : '#8a6600';
+}
+function renderEventChip(o){
+  const client = window._scheduleClients.find(c => c.id === o.client_id);
+  const name = client ? client.business_name : 'Unknown';
+  return `<div title="${escapeHtml(name)} — ${o.requested_sacks} sacks — ${o.status}" style="background:${eventChipColor(o.status)};color:#fff;border-radius:3px;padding:2px 5px;font-size:11px;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;">${escapeHtml(name)} · ${o.requested_sacks}sk</div>`;
+}
+
+function renderScheduleCalendar(){
+  const g = window._calGranularity;
+  if(g === 'month') renderCalMonth();
+  else if(g === 'week') renderCalWeek();
+  else renderCalDay();
+}
+
+function renderCalMonth(){
+  const anchor = window._calAnchor;
+  const year = anchor.getFullYear(), month = anchor.getMonth();
+  document.getElementById('cal-label').textContent = anchor.toLocaleDateString(undefined, { month:'long', year:'numeric' });
+  const firstOfMonth = new Date(year, month, 1);
+  const startOffset = firstOfMonth.getDay();
+  const gridStart = new Date(year, month, 1 - startOffset);
+  const todayStr = toDateStr(new Date());
+
+  let cells = '';
+  for(let i = 0; i < 42; i++){
+    const d = new Date(gridStart); d.setDate(gridStart.getDate() + i);
+    const dateStr = toDateStr(d);
+    const inMonth = d.getMonth() === month;
+    const events = ordersOnDate(dateStr);
+    cells += `
+      <div style="background:${inMonth ? '#fff' : 'var(--cream)'};border:1px solid var(--rope);min-height:90px;padding:6px;${dateStr===todayStr?'outline:2px solid var(--red);outline-offset:-2px;':''}">
+        <div style="font-size:11px;color:${inMonth ? 'var(--water)' : 'var(--rope-dark)'};margin-bottom:4px;">${d.getDate()}</div>
+        ${events.map(renderEventChip).join('')}
+      </div>`;
+  }
+  document.getElementById('schedule-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);">
+      ${DOW.map(d => `<div style="text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--water-light);padding:6px 0;">${d}</div>`).join('')}
+      ${cells}
+    </div>
+  `;
+}
+
+function renderCalWeek(){
+  const anchor = window._calAnchor;
+  const start = new Date(anchor); start.setDate(anchor.getDate() - anchor.getDay());
+  const end = new Date(start); end.setDate(start.getDate() + 6);
+  document.getElementById('cal-label').textContent = `${start.toLocaleDateString(undefined,{month:'short',day:'numeric'})} – ${end.toLocaleDateString(undefined,{month:'short',day:'numeric'})}`;
+  const todayStr = toDateStr(new Date());
+
+  let cols = '';
+  for(let i = 0; i < 7; i++){
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const dateStr = toDateStr(d);
+    const events = ordersOnDate(dateStr);
+    cols += `
+      <div style="background:#fff;border:1px solid var(--rope);min-height:220px;padding:8px;${dateStr===todayStr?'outline:2px solid var(--red);outline-offset:-2px;':''}">
+        <div style="font-size:12px;color:var(--water);font-weight:600;margin-bottom:8px;">${DOW[d.getDay()]} ${d.getDate()}</div>
+        ${events.length ? events.map(renderEventChip).join('') : '<div style="font-size:11px;color:var(--rope-dark);">—</div>'}
+      </div>`;
+  }
+  document.getElementById('schedule-body').innerHTML = `<div style="display:grid;grid-template-columns:repeat(7,1fr);">${cols}</div>`;
+}
+
+function renderCalDay(){
+  const d = window._calAnchor;
+  const dateStr = toDateStr(d);
+  document.getElementById('cal-label').textContent = d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'});
+  const events = ordersOnDate(dateStr);
+  document.getElementById('schedule-body').innerHTML = `
+    <div style="background:#fff;border:1px solid var(--rope);border-radius:4px;padding:18px;max-width:500px;">
+      ${events.length ? events.map(o => {
+        const client = window._scheduleClients.find(c => c.id === o.client_id);
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--rope);">
+          <div>
+            <div style="font-weight:600;">${client ? escapeHtml(client.business_name) : 'Unknown'}</div>
+            <div style="font-size:12px;color:var(--water-light);">${o.requested_sacks} sacks${o.notes ? ' — ' + escapeHtml(o.notes) : ''}</div>
+          </div>
+          <span class="status-pill status-${o.status}">${o.status}</span>
+        </div>`;
+      }).join('') : `<div class="empty-state">Nothing scheduled for this day.</div>`}
+    </div>
+  `;
 }
 
 function googleCalendarUrl(order, clientName){
