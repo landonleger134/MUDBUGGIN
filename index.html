@@ -870,6 +870,7 @@ async function renderClients(){
       <td data-label="Lead Time">${c.lead_time_hours}h</td>
       <td>
         <button class="btn small secondary" onclick="showClientForm('${c.id}')">Edit</button>
+        <button class="btn small secondary" onclick="shareOrCopy(PORTAL_URL, 'Mud Buggin LLC Portal')">Share Portal</button>
         <button class="btn small" style="background:transparent;color:var(--unpaid);border:1px solid var(--unpaid);margin-left:6px;" onclick="deleteClient('${c.id}', '${escapeHtml(c.business_name).replace(/'/g, "\\'")}')">Delete</button>
       </td>
     </tr>
@@ -971,6 +972,7 @@ async function renderClientDetail(id){
         Delivery Address: ${escapeHtml(c.delivery_address || '—')}<br>
         Portal: ${c.auth_user_id ? 'Active' : 'Not set up'}
       </p>
+      <button class="btn small secondary" onclick="shareOrCopy(PORTAL_URL, 'Mud Buggin LLC Portal')">Share Portal Link</button>
     </div>
 
     <h3 style="margin-top:26px;margin-bottom:10px;">Order Requests</h3>
@@ -1749,25 +1751,11 @@ async function renderSchedule(){
   const totalPickedUp = pickups.reduce((s,p)=>s+Number(p.total_weight_lbs),0);
   const totalDelivered = sacks.reduce((s,x)=>s+Number(x.weight_lbs),0);
   const onHand = totalPickedUp - totalDelivered;
-  const committedLbs = orders.filter(o => o.status === 'pending' || o.status === 'confirmed')
-    .reduce((s,o)=>s + (o.requested_sacks * avgSackWeight), 0);
-  const availableToPromise = onHand - committedLbs;
   const todayStr = new Date().toISOString().slice(0,10);
   const expectedIncoming = expected.filter(e => e.expected_date >= todayStr).reduce((s,e)=>s+Number(e.expected_weight_lbs),0);
 
-  document.getElementById('inventory-grid').innerHTML = `
-    <div class="stat-card"><div class="label">On Hand</div><div class="value">${onHand.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div></div>
-    <div class="stat-card"><div class="label">Committed (Pending + Confirmed)</div><div class="value" style="color:var(--water);">${committedLbs.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div></div>
-    <div class="stat-card" style="${availableToPromise < 0 ? 'border-color:var(--unpaid);border-width:2px;' : ''}">
-      <div class="label">Available to Promise</div>
-      <div class="value" style="${availableToPromise < 0 ? 'color:var(--unpaid);' : ''}">${availableToPromise.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
-    </div>
-    <div class="stat-card" style="border-style:dashed;">
-      <div class="label">Expected Incoming <span style="text-transform:none;">(unconfirmed)</span></div>
-      <div class="value" style="color:var(--gold-dark,#8a6600);">${expectedIncoming.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
-    </div>
-  `;
-
+  window._scheduleOnHand = onHand;
+  window._expectedIncoming = expectedIncoming;
   window._expectedPickups = expected;
   renderExpectedList();
   window._dailyCapacities = capacities;
@@ -1778,6 +1766,7 @@ async function renderSchedule(){
   if(!window._calAnchor) window._calAnchor = new Date();
   if(!window._scheduleViewMode) window._scheduleViewMode = 'list';
   if(!window._calGranularity) window._calGranularity = 'month';
+  renderInventoryGrid();
   renderScheduleBody();
 }
 
@@ -1850,9 +1839,36 @@ function navCal(delta){
   if(window._calGranularity === 'month') d.setMonth(d.getMonth() + delta);
   else if(window._calGranularity === 'week') d.setDate(d.getDate() + delta*7);
   else d.setDate(d.getDate() + delta);
+  renderInventoryGrid();
   renderScheduleBody();
 }
-function goToday(){ window._calAnchor = new Date(); renderScheduleBody(); }
+function goToday(){ window._calAnchor = new Date(); renderInventoryGrid(); renderScheduleBody(); }
+
+function renderInventoryGrid(){
+  const anchor = window._calAnchor || new Date();
+  const dateStr = toDateStr(anchor);
+  const todayStr = toDateStr(new Date());
+  const dayLabel = dateStr === todayStr ? 'Today' : anchor.toLocaleDateString(undefined,{month:'short',day:'numeric'});
+
+  const committedLbs = (window._scheduleOrders || [])
+    .filter(o => o.requested_date === dateStr && (o.status === 'pending' || o.status === 'confirmed'))
+    .reduce((s,o) => s + (o.requested_sacks * (window._scheduleAvgSack || 35)), 0);
+  const onHand = window._scheduleOnHand || 0;
+  const availableToPromise = onHand - committedLbs;
+
+  document.getElementById('inventory-grid').innerHTML = `
+    <div class="stat-card"><div class="label">On Hand</div><div class="value">${onHand.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div></div>
+    <div class="stat-card"><div class="label">Committed (${dayLabel})</div><div class="value" style="color:var(--water);">${committedLbs.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div></div>
+    <div class="stat-card" style="${availableToPromise < 0 ? 'border-color:var(--unpaid);border-width:2px;' : ''}">
+      <div class="label">Available to Promise (${dayLabel})</div>
+      <div class="value" style="${availableToPromise < 0 ? 'color:var(--unpaid);' : ''}">${availableToPromise.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
+    </div>
+    <div class="stat-card" style="border-style:dashed;">
+      <div class="label">Expected Incoming <span style="text-transform:none;">(unconfirmed)</span></div>
+      <div class="value" style="color:#8a6600;">${(window._expectedIncoming||0).toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
+    </div>
+  `;
+}
 
 function renderScheduleBody(){
   const controls = document.getElementById('cal-controls');
