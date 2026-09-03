@@ -234,9 +234,10 @@
 
   .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:8px;}
   @media (min-width:801px){ #stat-grid{grid-template-columns:repeat(3,1fr);} }
-  .stat-card{background:#fff;border:1px solid var(--rope);border-radius:4px;padding:18px;}
-  .stat-card .label{font-size:12px;color:var(--water-light);margin-bottom:6px;}
-  .stat-card .value{font-family:'Oswald',sans-serif;font-size:26px;color:var(--red);}
+  .stat-card{background:#fff;border:1px solid var(--rope);border-radius:4px;padding:16px;display:flex;flex-direction:column;min-height:92px;}
+  .stat-card .label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--water-light);line-height:1.3;margin-bottom:8px;}
+  .stat-card .value{font-family:'Oswald',sans-serif;font-size:26px;color:var(--red);line-height:1.1;margin-top:auto;}
+  .stat-card .caption{font-size:11px;color:var(--water-light);margin-top:4px;text-transform:none;letter-spacing:0;}
 
   #toast{
     position:fixed;bottom:24px;right:24px;
@@ -779,16 +780,17 @@ async function renderDashboard(){
     }).length;
     document.getElementById('stat-grid').innerHTML = `
       <div class="stat-card" style="${pendingCount ? 'border-color:var(--gold);border-width:2px;cursor:pointer;' : ''}" ${pendingCount ? `onclick="location.hash='#schedule'"` : ''}>
-        <div class="label">${pendingCount ? 'New Order Requests' : 'Order Requests'}</div>
+        <div class="label">${pendingCount ? 'New Orders' : 'Order Requests'}</div>
         <div class="value" style="${pendingCount ? 'color:#8a6600;' : ''}">${pendingCount}</div>
       </div>
-      <div class="stat-card"><div class="label">Unpaid Invoices</div><div class="value">$${unpaidTotal.toFixed(2)}</div></div>
-      <div class="stat-card"><div class="label">Revenue This Month</div><div class="value">$${revenueThisMonth.toFixed(2)}</div></div>
-      <div class="stat-card"><div class="label">Revenue This Year</div><div class="value">$${revenueThisYear.toFixed(2)}</div></div>
-      <div class="stat-card"><div class="label">Deliveries This Month</div><div class="value">${deliveriesThisMonth}</div></div>
+      <div class="stat-card"><div class="label">Unpaid</div><div class="value">$${unpaidTotal.toFixed(2)}</div><div class="caption">invoices</div></div>
+      <div class="stat-card"><div class="label">Revenue</div><div class="value">$${revenueThisMonth.toFixed(2)}</div><div class="caption">this month</div></div>
+      <div class="stat-card"><div class="label">Revenue</div><div class="value">$${revenueThisYear.toFixed(2)}</div><div class="caption">this year</div></div>
+      <div class="stat-card"><div class="label">Deliveries</div><div class="value">${deliveriesThisMonth}</div><div class="caption">this month</div></div>
       <div class="stat-card" style="${fullDaysAhead ? 'border-color:var(--unpaid);border-width:2px;cursor:pointer;' : ''}" ${fullDaysAhead ? `onclick="location.hash='#schedule'"` : ''}>
-        <div class="label">${fullDaysAhead ? 'Days Fully Booked (7d)' : 'Dock Pick Ups This Month'}</div>
+        <div class="label">${fullDaysAhead ? 'Days Booked' : 'Dock Pick Ups'}</div>
         <div class="value" style="${fullDaysAhead ? 'color:var(--unpaid);' : ''}">${fullDaysAhead || pickupsThisMonth}</div>
+        <div class="caption">${fullDaysAhead ? 'next 7 days' : 'this month'}</div>
       </div>
     `;
 
@@ -2021,15 +2023,24 @@ function renderInventoryGrid(){
   const availableToPromise = onHand - committedLbs;
 
   document.getElementById('inventory-grid').innerHTML = `
-    <div class="stat-card"><div class="label">On Hand</div><div class="value">${onHand.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div></div>
-    <div class="stat-card"><div class="label">Committed (${dayLabel})</div><div class="value" style="color:var(--water);">${committedLbs.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div></div>
+    <div class="stat-card">
+      <div class="label">On Hand</div>
+      <div class="value">${onHand.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Committed</div>
+      <div class="value" style="color:var(--water);">${committedLbs.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
+      <div class="caption">${dayLabel}</div>
+    </div>
     <div class="stat-card" style="${availableToPromise < 0 ? 'border-color:var(--unpaid);border-width:2px;' : ''}">
-      <div class="label">Available to Promise (${dayLabel})</div>
+      <div class="label">Available</div>
       <div class="value" style="${availableToPromise < 0 ? 'color:var(--unpaid);' : ''}">${availableToPromise.toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
+      <div class="caption">to promise, ${dayLabel}</div>
     </div>
     <div class="stat-card" style="border-style:dashed;">
-      <div class="label">Expected Incoming <span style="text-transform:none;">(unconfirmed)</span></div>
+      <div class="label">Expected Incoming</div>
       <div class="value" style="color:#8a6600;">${(window._expectedIncoming||0).toLocaleString(undefined,{maximumFractionDigits:0})} lb</div>
+      <div class="caption">unconfirmed</div>
     </div>
   `;
 }
@@ -2386,7 +2397,7 @@ async function renderARReport(){
 
   document.getElementById('ar-summary').innerHTML = `
     <div class="stat-card"><div class="label">Total Outstanding</div><div class="value">$${grandTotal.toFixed(2)}</div></div>
-    <div class="stat-card"><div class="label">Clients With a Balance</div><div class="value">${clientsOwing}</div></div>
+    <div class="stat-card"><div class="label">Owing</div><div class="value">${clientsOwing}</div><div class="caption">clients</div></div>
     <div class="stat-card" style="${overdueCount ? 'border-color:var(--unpaid);border-width:2px;' : ''}">
       <div class="label">Over 30 Days</div>
       <div class="value" style="${overdueCount ? 'color:var(--unpaid);' : ''}">${overdueCount}</div>
